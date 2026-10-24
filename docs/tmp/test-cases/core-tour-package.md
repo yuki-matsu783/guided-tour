@@ -112,6 +112,8 @@ keywords: [parseTour, matchUrl, importFiles, zod, yaml, fflate, fake-indexeddb]
 | T-TOUR-61 | エラーがちょうど20件のとき20件すべてが返り、21件以上あるとき20件だけが返る | 設計書「ツアー形式・検証」の使い方 |
 | T-TOUR-62 | 警告の件数に上限があるかを確かめる（「仕様の疑問」参照）。エラーと警告は別の一覧で返る | 設計書の使い方（仕様の疑問 Q10） |
 | T-TOUR-63 | 構文エラーのとき、形式の検証には進まず、構文エラーだけが返る | 設計書「ツアー形式・検証」の役割（仕様の疑問 Q7） |
+| T-TOUR-64 | `name`・`label`・`text`・`css` を `{values, within}` の形で書いたとき通り、`within` に範囲か `page` 以外を書いたとき、`values` が空のときはエラーになる | 設計：探す範囲（手がかりごと） |
+| T-TOUR-65 | `role` があり `name` がない target は取り込めて、FR-10 の警告が出る | FR-10、利用者の判断 |
 
 ## URL 条件（core/tour/url）
 

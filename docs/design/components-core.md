@@ -22,7 +22,7 @@ keywords: [zod, yaml, fflate, locator]
 | ツアー | `schemaVersion: 3`、`id`（英数字・`.`・`_`・`-`）、`name`、`description?`、`updatedAt?`、`minExtensionVersion?`、`origins[]`（http/https、ワイルドカード不可）、`tabs{役割: {label?, open?, url?}}` |
 | ステップ | `id`、`title`、`kind: page \| guide`（既定は page）、`tab?`（既定は main）、`url?`（URL 条件）、`open?`、`body?` または `bodyFile?`、`tip?`、`media?{src, alt, caption?}`、`target?`、`done?` |
 | URL 条件 | `origin`（`origins` のいずれかと完全一致）、`path?{exact \| prefix \| glob}`（省略時はオリジン全体） |
-| target | 探索の手がかり：`tourId?`、`testId?`、`role?`＋`name[]`、`label[]`、`text[]`、`textTag?`、`match?: exact \| contains`、`css?[]`。探す範囲：`within?`（役割＋名前、ラベル、CSS のいずれか）。必須の照合：`require?{role?, inputType?, region?, name?[]}`。ハイライト：`highlight?{closest}`。`fallbackText?` |
+| target | 探索の手がかり：`tourId?`、`testId?`、`role?`＋`name[]`、`label[]`、`text[]`、`textTag?`、`match?: exact \| contains`、`css?[]`。探す範囲：`within?`（役割＋名前、ラベル、CSS のいずれか。全段階の既定の範囲）。`name`・`label`・`text`・`css` は、候補の配列か `{values[], within?}`（`within` は範囲か `page`。その段階だけ範囲を上書きする）。必須の照合：`require?{role?, inputType?, region?, name?[]}`。ハイライト：`highlight?{closest}`。`fallbackText?` |
 | done | `type: page \| element \| state`、`url?`（page のとき。URL 条件）、`target?`（element・state のとき。状態を判定する要素で、ハイライトする要素とは別に指定する）、`state?: filled \| checked \| selected \| expanded \| pressed`、`minLength?`、`allowHidden?`、`hint?`、`doneHint?` |
 
 検証の規則は次のとおりです。
@@ -34,6 +34,7 @@ keywords: [zod, yaml, fflate, locator]
 | `kind: guide` のステップは、`target`・`url`・`done` を持てない | エラー |
 | URL 条件のパスに正規表現の記号らしきもの（`(`、`[`、`\`、`$` など）がある、上限を超える | エラー |
 | `target` に `require` がなく、手がかりが段階1か段階5だけで、名前の候補もない | 警告（FR-10） |
+| `role` があり、`name` がない | 警告（FR-10） |
 
 ## URL 条件（core/tour/url）
 
@@ -73,7 +74,7 @@ keywords: [zod, yaml, fflate, locator]
 | `counts` | 段階ごとの候補数（集めた数・必須の照合後・表示の確認後） |
 
 - 処理（段階ごと）：
-  1. 探す範囲：`within` を解決する。0件か2件以上なら、範囲を使うこの手がかりは失敗とする（ページ全体には広げない）
+  1. 探す範囲：その段階の手がかりに `within` があればそれを、無ければ `target.within` を解決する（`page`、またはどちらも無ければページ全体）。0件か2件以上なら、その範囲を使う段階は失敗とする（ページ全体には広げない）
   2. 候補を集める。ページ側の表示のホスト要素とその中身は、常に除外する
 
      | 段階 | 探し方 |
