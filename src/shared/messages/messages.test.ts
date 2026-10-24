@@ -318,6 +318,7 @@ describe('バックグラウンド → サイドパネル', () => {
     tour: { id: 't', name: 'ツアー', hash: 'h', origins: ['https://a.example'], source: 'imported' },
     steps: [{ id: 'a', title: 'A', kind: 'page' }],
     stepIndex: 0,
+    roles: [{ id: 'main', label: 'メイン' }],
     tabStatus: {
       role: 'main',
       status: 'missing',

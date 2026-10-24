@@ -77,6 +77,13 @@ function tabView(evaluation: TabEvaluation): TabView {
   };
 }
 
+/** 役割の ID と表示名の一覧。役割 `main` は `tabs` に書かなくても使えるので、先頭に補う。 */
+function roleLabels(tour: Tour): PanelView['roles'] {
+  const tabs = tour.tabs ?? {};
+  const roles = Object.entries(tabs).map(([id, tab]) => ({ id, label: tab.label ?? id }));
+  return Object.hasOwn(tabs, 'main') ? roles : [{ id: 'main', label: 'main' }, ...roles];
+}
+
 export async function buildView(input: ViewInput): Promise<PanelView> {
   const { deps, store, state, pinned, settings, evaluation } = input;
   const catalog = await catalogView(deps, store, deps.catalog);
@@ -91,6 +98,7 @@ export async function buildView(input: ViewInput): Promise<PanelView> {
       tour: null,
       steps: [],
       stepIndex: 0,
+      roles: [],
       tabStatus: null,
       overlayHidden: false,
       hint: { met: false, unsupported: false, stopped: false },
@@ -121,6 +129,7 @@ export async function buildView(input: ViewInput): Promise<PanelView> {
           },
     steps: pinned === null ? [] : pinned.tour.steps.map((s) => ({ id: s.id, title: s.title, kind: s.kind })),
     stepIndex: state.stepIndex,
+    roles: pinned === null ? [] : roleLabels(pinned.tour),
     tabStatus: running && evaluation !== null ? tabView(evaluation) : null,
     overlayHidden: state.overlayHidden,
     hint: {

@@ -333,6 +333,45 @@ describe('フォーカス', () => {
   });
 });
 
+describe('役割の表示名', () => {
+  const bound = (roles: { id: string; label: string }[]) =>
+    runningView({
+      roles,
+      tabStatus: {
+        role: 'sub',
+        status: 'missing',
+        candidates: [{ tabId: 5, title: '別のタブ', windowId: 1, boundRole: 'main' }],
+        attended: false,
+        selected: false,
+      },
+    });
+
+  it('R-PANEL-69: 対応付け済みの候補と付け替えの確認には、役割の ID ではなく表示名を出す', async () => {
+    const deps = withBundled(makeDeps(bound([{ id: 'main', label: 'メイン' }, { id: 'sub', label: 'サブ' }])));
+    deps.getActiveTabId = () => Promise.resolve(null);
+    const { container } = await mount(<App deps={deps} />);
+    await flush(10);
+    const candidates = textOf(container.querySelector('.candidates') ?? container);
+    expect(candidates).toContain('「メイン」に対応付け済み');
+    expect(candidates).not.toContain('「main」');
+    expect(candidates).toContain('「サブ」として使う');
+
+    deps.respond = (m) => (m.type === 'BIND_TAB' && !m.force ? { status: 'confirmBind', boundRole: 'main' } : { status: 'done' });
+    await click(getButton(container, '「別のタブ」を「サブ」として使う'));
+    const dialog = textOf(container.querySelector('[role="alertdialog"]') ?? container);
+    expect(dialog).toContain('すでに「メイン」に対応付けられています');
+    expect(dialog).not.toContain('「main」');
+  });
+
+  it('R-PANEL-70: 表示名が写しに無い役割は、ID をそのまま出す', async () => {
+    const deps = withBundled(makeDeps(bound([])));
+    deps.getActiveTabId = () => Promise.resolve(null);
+    const { container } = await mount(<App deps={deps} />);
+    await flush(10);
+    expect(textOf(container.querySelector('.candidates') ?? container)).toContain('「main」に対応付け済み');
+  });
+});
+
 describe('古い操作', () => {
   it('R-PANEL-35: 表示中の sessionId・gen が変わったら、新しい値を付けて送る', async () => {
     const { deps, container } = await openRunning();

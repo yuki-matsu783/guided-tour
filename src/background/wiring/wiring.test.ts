@@ -25,6 +25,7 @@ const VIEW = PanelViewSchema.parse({
   tour: null,
   steps: [],
   stepIndex: 0,
+  roles: [],
   tabStatus: null,
   overlayHidden: false,
   hint: { met: false, unsupported: false, stopped: false },

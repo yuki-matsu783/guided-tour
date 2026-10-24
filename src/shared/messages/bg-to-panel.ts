@@ -75,6 +75,8 @@ export const PanelViewSchema = z.object({
     z.object({ id: z.string(), title: z.string(), kind: z.enum(['page', 'guide']) }),
   ),
   stepIndex: z.int().nonnegative(),
+  /** 実行中のツアーの役割の表示名（`tabs.<役割>.label`、無ければ役割の ID）。実行中のツアーが無ければ空。 */
+  roles: z.array(z.object({ id: z.string(), label: z.string() })),
   /** 現在のステップの役割のタブの状態。`guide` のステップや実行中でないときは null。 */
   tabStatus: TabViewSchema.nullable(),
   overlayHidden: z.boolean(),

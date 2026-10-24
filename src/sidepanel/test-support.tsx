@@ -105,6 +105,7 @@ export function makeView(over: Partial<PanelView> = {}): PanelView {
     tour: null,
     steps: [],
     stepIndex: 0,
+    roles: [],
     tabStatus: null,
     overlayHidden: false,
     hint: { met: false, unsupported: false, stopped: false },

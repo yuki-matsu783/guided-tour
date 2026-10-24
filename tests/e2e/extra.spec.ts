@@ -115,9 +115,9 @@ test('E-75: すでに別の役割に対応付けたタブを別の役割に選�
   await expectPanelStep(panel, '2/2');
 
   // 「サブ」には、「メイン」に対応付け済みのタブが候補に出る
-  await expect(panel.page.locator('.candidates')).toContainText('「main」に対応付け済み');
+  await expect(panel.page.locator('.candidates')).toContainText('「メイン」に対応付け済み');
   await panel.useTab();
-  await expect(panel.page.getByRole('alertdialog')).toContainText('すでに「main」に対応付けられています');
+  await expect(panel.page.getByRole('alertdialog')).toContainText('すでに「メイン」に対応付けられています');
   await panel.cancel();
   expect((await tourState(ext)).tabs.sub).toBeUndefined();
 

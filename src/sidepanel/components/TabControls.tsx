@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { TabCandidate, TabView } from '../../shared/messages/index.ts';
 import { usePanel } from '../context.ts';
+import { roleLabelOf } from '../role-label.ts';
 
 interface TabControlsProps {
   tab: TabView;
@@ -24,7 +25,8 @@ function candidateLabel(c: TabCandidate, roleLabel: string, isActive: boolean): 
 }
 
 export function TabControls({ tab, roleLabel, canOpen }: TabControlsProps): ReactNode {
-  const { deps, ops } = usePanel();
+  const { deps, ops, view } = usePanel();
+  const roles = view.roles;
   const [activeTabId, setActiveTabId] = useState<number | null>(null);
   const needsBinding = tab.status === 'missing' || tab.status === 'mismatch';
   const candidateKey = tab.candidates.map((c) => c.tabId).join(',');
@@ -82,7 +84,7 @@ export function TabControls({ tab, roleLabel, canOpen }: TabControlsProps): Reac
                 >
                   {candidateLabel(c, roleLabel, c.tabId === activeTabId)}
                 </button>
-                {c.boundRole !== null && <span className="meta">{`（「${c.boundRole}」に対応付け済み）`}</span>}
+                {c.boundRole !== null && <span className="meta">{`（「${roleLabelOf(roles, c.boundRole)}」に対応付け済み）`}</span>}
               </li>
             ))}
           </ul>

@@ -18,6 +18,7 @@ import type { PanelDeps } from './deps.ts';
 import { ConfirmDialog, useFocusRestore } from './focus.tsx';
 import type { OverwriteRequest } from './import/index.ts';
 import { createOps } from './ops.ts';
+import { roleLabelOf } from './role-label.ts';
 import { usePanelView } from './use-panel-view.ts';
 
 type DialogState =
@@ -228,7 +229,7 @@ export function App({ deps }: { deps: PanelDeps }): ReactNode {
           }}
           onCancel={closeDialog}
         >
-          <p>{`このタブは、すでに「${dialog.boundRole}」に対応付けられています。付け替えますか。`}</p>
+          <p>{`このタブは、すでに「${roleLabelOf(view?.roles ?? [], dialog.boundRole)}」に対応付けられています。付け替えますか。`}</p>
         </ConfirmDialog>
       )}
       {dialog?.kind === 'remove' && (

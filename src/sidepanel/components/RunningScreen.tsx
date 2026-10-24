@@ -9,6 +9,7 @@ import type { ReactNode } from 'react';
 import type { Done, Step } from '../../core/tour/index.ts';
 import type { Hint } from '../../shared/messages/index.ts';
 import { usePanel } from '../context.ts';
+import { roleLabelOf } from '../role-label.ts';
 import { useAssetUrl, useStepBody, useTourContent } from '../use-content.ts';
 import { Markdown } from './Markdown.tsx';
 import { PauseStopExplanation, RestartedNotice, SaveErrorNotice, TourHeading } from './common.tsx';
@@ -123,7 +124,9 @@ export function RunningScreen(): ReactNode {
   const isGuide = summary?.kind === 'guide';
   const tab = view.tabStatus;
   const role = tab?.role ?? step?.tab ?? '';
-  const roleLabel = content?.tabs?.[role]?.label ?? role;
+  const roleLabel = view.roles.some((r) => r.id === role)
+    ? roleLabelOf(view.roles, role)
+    : (content?.tabs?.[role]?.label ?? role);
   const openUrl = step?.open ?? content?.tabs?.[role]?.open;
   const canOpen = content == null || openUrl !== undefined;
 
