@@ -56,6 +56,11 @@ export interface Overlay {
     hint: string | null,
     miniGuideRect: Rect | null,
   ): void;
+  /**
+   * 表示を戻すボタンだけを出す（枠・減衰板・吹き出しは出さない）。対象を特定できていないときのために使う。
+   * 同じ内容で何度呼んでもよい。
+   */
+  showRestore(): void;
   clear(): void;
 }
 
@@ -159,7 +164,7 @@ export function createOverlay(deps: OverlayDeps): Overlay {
 
   function ensureParts(): Parts {
     if (parts) return parts;
-    const ui = createOwnHost(doc, attach, OVERLAY_CSS);
+    const ui = createOwnHost(doc, attach, OVERLAY_CSS, 'back');
     const bubble = div('bubble');
     const title = div('title');
     const tip = div('tip');
@@ -244,6 +249,11 @@ export function createOverlay(deps: OverlayDeps): Overlay {
       p.bubble.style.left = px(placed.left);
       p.bubble.style.top = px(placed.top);
       p.bubble.dataset.placement = placed.placement;
+    },
+    showRestore() {
+      const p = ensureParts();
+      detach(...p.plates, p.frame, p.bubble);
+      attached(p, p.restore);
     },
     clear() {
       parts?.ui.remove();

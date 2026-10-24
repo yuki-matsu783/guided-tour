@@ -63,18 +63,20 @@ export function request(tour: TourOrigins, api: Pick<PermissionsApi, 'request'>)
 
 /**
  * 権限が取り消されたとき、実行中のツアーのパターンが1つでも失われていれば `onLost` を呼ぶ。
- * 実行中のツアーがないとき、無関係なオリジンだけが取り消されたときは何もしない。解除用の関数を返す。
+ * 通知の中身（`https://host/*`・`*://host/*`・`<all_urls>` など）には頼らず、通知のたびに `contains` で確かめ直す。
+ * 実行中のツアーがないときは何もしない。解除用の関数を返す。
  */
 export function watchRemoved(
-  api: Pick<PermissionsApi, 'onRemoved'>,
+  api: Pick<PermissionsApi, 'onRemoved' | 'contains'>,
   getRunningTour: () => TourOrigins | null,
   onLost: () => void,
 ): () => void {
-  const listener = (removed: RemovedPermissions): void => {
+  const listener = (): void => {
     const tour = getRunningTour();
     if (tour === null) return;
-    const lost = new Set(removed.origins ?? []);
-    if (patternsOf(tour).some((p) => lost.has(p))) onLost();
+    void has(tour, api).then((granted) => {
+      if (!granted) onLost();
+    });
   };
   api.onRemoved.addListener(listener);
   return () => {

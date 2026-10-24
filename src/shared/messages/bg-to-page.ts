@@ -4,7 +4,7 @@
  */
 import { z } from 'zod';
 import { GenSchema, PageSeqSchema, RevSchema, SessionIdSchema } from '../ids/index.ts';
-import { HintSchema, PageStepSchema, UiSettingsSchema } from './common.ts';
+import { HintSchema, PageStepSchema, RenderUiSchema } from './common.ts';
 
 export const RenderSchema = z.object({
   type: z.literal('RENDER'),
@@ -16,7 +16,7 @@ export const RenderSchema = z.object({
   index: z.int().nonnegative(),
   total: z.int().positive(),
   overlay: z.object({ hidden: z.boolean() }),
-  ui: UiSettingsSchema,
+  ui: RenderUiSchema,
   selected: z.boolean(),
   attended: z.boolean(),
   donePage: z.boolean(),

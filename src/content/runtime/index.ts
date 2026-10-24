@@ -29,6 +29,11 @@ export const THROTTLE_MS = 250;
 export const REVALIDATE_MS = 1000;
 /** 8秒以降の低い頻度での探索の間隔。 */
 export const LOW_FREQUENCY_MS = 2000;
+/**
+ * 完了ページ（donePage）でも、ミニガイドを表示しない設定で表示が消えているとき「表示を戻す」を出すか。
+ * 要件書どおり出す。出さない形に戻すときは、ここを偽にするだけでよい。
+ */
+export const RESTORE_ON_DONE_PAGE = true;
 
 export interface RuntimeDeps extends Partial<TimerDeps> {
   doc: Document;
@@ -129,6 +134,11 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
   let maxRev = -1;
   let run: Run | null = null;
   let epochCounter = 0;
+  /** ミニガイドを描き直している最中か。この間の領域の変化の通知では、吹き出しを描き直さない（続けて描くため）。 */
+  let presenting = false;
+  const stopRectWatch = deps.miniGuide.onRectChange(() => {
+    if (!presenting) presentOverlay();
+  });
 
   // ---- 表示 ----
 
@@ -138,6 +148,32 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       return { met: render.hint.met, unsupported: render.hint.unsupported, stopped: !render.selected };
     }
     return { met: r.hint.met, unsupported: r.hint.unsupported, stopped: !render.selected };
+  }
+
+  /** 表示を戻すボタンだけを出すか（ミニガイドを表示しない設定で、ページ上の表示が消えているページ手順）。 */
+  function wantsRestoreOnly(render: Render): boolean {
+    return render.overlay.hidden && !render.ui.enabled && (!render.donePage || RESTORE_ON_DONE_PAGE);
+  }
+
+  /** 吹き出し・減衰板・枠・表示を戻すボタンを、今の状態で描く。ミニガイドの領域が変わったときにも呼ぶ。 */
+  function presentOverlay(): void {
+    if (run === null) return;
+    const { render } = run;
+    const { step } = render;
+    if (run.held !== null && render.selected && !render.donePage) {
+      const kind = hintKind(step.done !== undefined || render.donePage, currentHint(run));
+      deps.overlay.paint(
+        run.held.highlightEl,
+        { title: step.title, tip: step.tip },
+        { hidden: render.overlay.hidden, miniGuideEnabled: render.ui.enabled },
+        hintText(kind, step.done?.hint),
+        render.ui.enabled ? deps.miniGuide.getRect() : null,
+      );
+    } else if (wantsRestoreOnly(render)) {
+      deps.overlay.showRestore();
+    } else {
+      deps.overlay.clear();
+    }
   }
 
   function present(): void {
@@ -151,36 +187,30 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     const searchesTarget = step.target !== undefined && render.selected && !render.donePage;
     const missing = searchesTarget && r.held === null && r.phase === 'low';
 
-    deps.miniGuide.renderMiniGuide(
-      {
-        sessionId: render.sessionId,
-        gen: render.gen,
-        index: render.index,
-        total: render.total,
-        title: step.title,
-        tip: step.tip,
-        hintKind: kind,
-        hintText: text,
-        fallbackText: missing ? (render.fallbackText ?? TEXT_FALLBACK_DEFAULT) : null,
-        isLast: render.isLast,
-        overlayHidden: render.overlay.hidden,
-        hasTarget: !render.donePage && step.target !== undefined,
-        shortcut: render.shortcut,
-      },
-      render.ui,
-    );
-
-    if (r.held !== null && render.selected && !render.donePage) {
-      deps.overlay.paint(
-        r.held.highlightEl,
-        { title: step.title, tip: step.tip },
-        { hidden: render.overlay.hidden, miniGuideEnabled: render.ui.enabled },
-        text,
-        render.ui.enabled ? deps.miniGuide.getRect() : null,
+    presenting = true;
+    try {
+      deps.miniGuide.renderMiniGuide(
+        {
+          sessionId: render.sessionId,
+          gen: render.gen,
+          index: render.index,
+          total: render.total,
+          title: step.title,
+          tip: step.tip,
+          hintKind: kind,
+          hintText: text,
+          fallbackText: missing ? (render.fallbackText ?? TEXT_FALLBACK_DEFAULT) : null,
+          isLast: render.isLast,
+          overlayHidden: render.overlay.hidden,
+          hasTarget: !render.donePage && step.target !== undefined,
+          shortcut: render.shortcut,
+        },
+        render.ui,
       );
-    } else {
-      deps.overlay.clear();
+    } finally {
+      presenting = false;
     }
+    presentOverlay();
   }
 
   // ---- 後始末 ----
@@ -356,7 +386,9 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     r.frame = null;
     r.frameRectKey = null;
     deps.overlay.clear();
-    report(r, result);
+    // `missing`（見つからない）の報告は、探し直しの8秒が過ぎたとき（startDeadline）だけにする。8秒以内に戻れば送らない。
+    // それ以外の理由（役割の不一致・非表示など）で外れたときは、すぐ報告する
+    if (!result.reasons.includes('missing')) report(r, result);
     startDeadline(r);
     present();
   }
@@ -571,6 +603,9 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
       }
     },
     getSessionId: () => run?.render.sessionId ?? null,
-    dispose: clearAll,
+    dispose() {
+      clearAll();
+      stopRectWatch();
+    },
   };
 }

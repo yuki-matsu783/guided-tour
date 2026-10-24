@@ -50,7 +50,7 @@ const pageMessages = {
   GOTO: panelMessages.GOTO,
   SCROLL_TO_TARGET: panelMessages.SCROLL_TO_TARGET,
   SET_OVERLAY: panelMessages.SET_OVERLAY,
-  SET_UI: panelMessages.SET_UI,
+  SET_UI: { type: 'SET_UI', mode: 'hover', width: 320 },
   LOG: panelMessages.LOG,
 };
 
@@ -219,6 +219,15 @@ describe('ページ側 → バックグラウンド', () => {
     }
   });
 
+  it('S-2: ページ側の SET_UI は mode と width だけで、enabled を含むものは捨てられる', () => {
+    expect(parsePageToBg({ type: 'SET_UI' })).not.toBeNull();
+    expect(parsePageToBg({ type: 'SET_UI', mode: 'minimized' })).not.toBeNull();
+    expect(parsePageToBg({ type: 'SET_UI', width: 400 })).not.toBeNull();
+    expect(parsePageToBg({ type: 'SET_UI', enabled: false })).toBeNull();
+    expect(parsePageToBg({ type: 'SET_UI', enabled: true, mode: 'hover', width: 320 })).toBeNull();
+    expect(parsePageToBg({ type: 'SET_UI', width: 100 })).toBeNull();
+  });
+
   it('T-MSG-20: 本文の自己申告の sender は結果に残らない', () => {
     const parsed = parsePageToBg({
       ...(pageMessages.HINT_STATE),
@@ -244,6 +253,20 @@ describe('バックグラウンド → ページ側', () => {
     expect(parseBgToPage({ type: 'CLEAR' })).toBeNull();
     expect(parseBgToPage({ type: 'RECHECK' })).toBeNull();
     expect(parseBgToPage({ type: 'SYNC', sessionId: 's1', gen: 1 })).toBeNull();
+  });
+
+  it('S-3: RENDER の ui.width が範囲外でも捨てられず、範囲内に丸めて受け付ける', () => {
+    const wide = BgToPageSchema.safeParse({ ...render, ui: { enabled: true, mode: 'expanded', width: 9999 } });
+    expect(wide.success).toBe(true);
+    const narrow = BgToPageSchema.safeParse({ ...render, ui: { enabled: true, mode: 'expanded', width: 10 } });
+    expect(narrow.success).toBe(true);
+    if (wide.success && wide.data.type === 'RENDER') expect(wide.data.ui.width).toBe(560);
+    if (narrow.success && narrow.data.type === 'RENDER') expect(narrow.data.ui.width).toBe(240);
+    expect(parseBgToPage({ ...render, ui: { enabled: true, mode: 'expanded', width: 'x' } })).toBeNull();
+  });
+
+  it('S-3: サイドパネルからの SET_UI の幅は、範囲外なら今まで通り捨てられる', () => {
+    expect(parsePanelToBg({ type: 'SET_UI', width: 9999 }, PANEL, EXT)).toBeNull();
   });
 
   it('T-MSG-14: RENDER の step が形に合わないと捨てられる', () => {

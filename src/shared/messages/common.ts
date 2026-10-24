@@ -16,8 +16,10 @@ export const UiModeSchema = z.enum(['expanded', 'minimized', 'hover']);
 export type UiMode = z.output<typeof UiModeSchema>;
 
 const widthSchema = z.int().min(UI_WIDTH_MIN).max(UI_WIDTH_MAX);
+/** 範囲外の幅を捨てず、範囲内に丸めて受け付ける幅（バックグラウンド → ページ側の描画指示用）。 */
+const clampedWidthSchema = z.int().transform((w) => Math.min(UI_WIDTH_MAX, Math.max(UI_WIDTH_MIN, w)));
 
-/** ミニガイドの設定（描画指示とサイドパネルの写しが運ぶ）。 */
+/** ミニガイドの設定（サイドパネルの写しが運ぶ）。幅が範囲外なら捨てる。 */
 export const UiSettingsSchema = z.object({
   enabled: z.boolean(),
   mode: UiModeSchema,
@@ -25,9 +27,22 @@ export const UiSettingsSchema = z.object({
 });
 export type UiSettings = z.output<typeof UiSettingsSchema>;
 
-/** `SET_UI` の本体。一部だけでもよい。 */
+/** 描画指示（RENDER）が運ぶミニガイドの設定。幅が範囲外でも指示全体は捨てず、範囲内に丸める。 */
+export const RenderUiSchema = z.object({
+  enabled: z.boolean(),
+  mode: UiModeSchema,
+  width: clampedWidthSchema,
+});
+
+/** サイドパネルからの `SET_UI` の本体。一部だけでもよい。 */
 export const SetUiFields = {
   enabled: z.boolean().optional(),
+  mode: UiModeSchema.optional(),
+  width: widthSchema.optional(),
+} as const;
+
+/** ページ側からの `SET_UI` の本体。`enabled` は変えられない（含むメッセージは捨てる）。 */
+export const PageSetUiFields = {
   mode: UiModeSchema.optional(),
   width: widthSchema.optional(),
 } as const;

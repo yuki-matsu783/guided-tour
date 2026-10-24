@@ -4,7 +4,7 @@
  */
 import { z } from 'zod';
 import { GenSchema, OpIdSchema, SessionIdSchema } from '../ids/index.ts';
-import { SetUiFields } from './common.ts';
+import { PageSetUiFields, SetUiFields } from './common.ts';
 
 export const GotoSchema = z.object({
   type: z.literal('GOTO'),
@@ -28,4 +28,8 @@ export const SetOverlaySchema = z.object({
   opId: OpIdSchema,
 });
 
+/** サイドパネルからの `SET_UI`。 */
 export const SetUiSchema = z.object({ type: z.literal('SET_UI'), ...SetUiFields });
+
+/** ページ側からの `SET_UI`。`mode` と `width` だけ。知らない項目（`enabled` を含む）があれば受け付けない。 */
+export const PageSetUiSchema = z.strictObject({ type: z.literal('SET_UI'), ...PageSetUiFields });

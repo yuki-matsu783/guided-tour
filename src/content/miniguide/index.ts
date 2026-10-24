@@ -69,11 +69,35 @@ export interface MiniGuide {
   renderMiniGuide(model: MiniGuideModel | null, ui: UiSettings): void;
   /** 今のミニガイドが占める領域。描かれていなければ null。 */
   getRect(): Rect | null;
+  /**
+   * 占める領域（幅・表示状態・有無）が変わったときに呼ぶ関数を登録する。解除用の関数を返す。
+   * ホバーでの一時的な展開、最小化と展開の切り替え、ドラッグ中の幅の変化でも呼ばれる。
+   */
+  onRectChange(listener: () => void): () => void;
   remove(): void;
 }
 
+/** 幅を整数に丸めて、許される範囲に収める（`clientX` が小数のときも幅は整数のまま）。 */
 export function clampWidth(width: number): number {
-  return clamp(width, UI_WIDTH_MIN, UI_WIDTH_MAX);
+  return clamp(Math.round(width), UI_WIDTH_MIN, UI_WIDTH_MAX);
+}
+
+function sameModel(a: MiniGuideModel, b: MiniGuideModel): boolean {
+  return (
+    a.sessionId === b.sessionId &&
+    a.gen === b.gen &&
+    a.index === b.index &&
+    a.total === b.total &&
+    a.title === b.title &&
+    a.tip === b.tip &&
+    a.hintKind === b.hintKind &&
+    a.hintText === b.hintText &&
+    a.fallbackText === b.fallbackText &&
+    a.isLast === b.isLast &&
+    a.overlayHidden === b.overlayHidden &&
+    a.hasTarget === b.hasTarget &&
+    a.shortcut === b.shortcut
+  );
 }
 
 interface View {
@@ -127,6 +151,16 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
   let hoverOpen = false;
   let closeTimer: TimerHandle | null = null;
   let drag: { startX: number; startWidth: number } | null = null;
+  const rectListeners = new Set<() => void>();
+  /** 最後に通知した領域の印。変わったときだけ通知する。 */
+  let lastRectKey = 'none';
+
+  function notifyRect(): void {
+    const key = view === null ? 'none' : String(currentWidth());
+    if (key === lastRectKey) return;
+    lastRectKey = key;
+    for (const listener of Array.from(rectListeners)) listener();
+  }
 
   function sendUi(): void {
     deps.send({ type: 'SET_UI', mode, width });
@@ -254,6 +288,13 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
     }
   }
 
+  /** ノードがミニガイドの Shadow DOM の内側か（今は取り外されている部品も含む）。 */
+  function isInside(node: Node): boolean {
+    if (view === null) return false;
+    const v = view;
+    return v.ui.root.contains(node) || v.bar.contains(node) || v.body.contains(node) || v.handle.contains(node);
+  }
+
   function attachHover(panel: HTMLElement): void {
     const open = (event: Event): void => {
       if (!trusted(event) || mode !== 'hover') return;
@@ -276,8 +317,8 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
     panel.addEventListener('focusin', open);
     panel.addEventListener('pointerleave', leave);
     panel.addEventListener('focusout', (event) => {
-      // 中の別の要素へ移っただけなら閉じない
-      if (event instanceof FocusEvent && event.relatedTarget instanceof Node && panel.contains(event.relatedTarget)) return;
+      // フォーカスがミニガイドの中（Shadow DOM の内側）に留まるなら閉じない
+      if (event instanceof FocusEvent && event.relatedTarget instanceof Node && isInside(event.relatedTarget)) return;
       leave(event);
     });
   }
@@ -334,10 +375,13 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
     v.panel.dataset.mode = mode;
     v.panel.dataset.width = String(w);
 
+    // バーにフォーカスがあるまま展開すると、バーが外れてフォーカスが失われる。展開後の最初の操作部品へ移す
+    const barHadFocus = v.ui.root.activeElement === v.bar;
     const children = expanded ? [v.handle, v.body] : [v.bar];
     const keep = new Set<Node>(children);
     for (const child of Array.from(v.panel.children)) if (!keep.has(child)) child.remove();
     for (const child of children) if (child.parentNode !== v.panel) v.panel.appendChild(child);
+    if (expanded && barHadFocus) v.handle.focus();
 
     const stepLabel = `${String(m.index + 1)}/${String(m.total)}`;
     v.step.textContent = stepLabel;
@@ -370,6 +414,7 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
     v.next.textContent = m.isLast ? '完了' : '次へ';
     v.reveal.hidden = !m.hasTarget;
     v.restore.hidden = !m.overlayHidden;
+    notifyRect();
   }
 
   function remove(): void {
@@ -380,6 +425,7 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
     lastUi = null;
     hoverOpen = false;
     drag = null;
+    notifyRect();
   }
 
   return {
@@ -388,16 +434,28 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
         remove();
         return;
       }
-      if (lastUi?.mode !== ui.mode || lastUi.width !== ui.width) {
+      const uiChanged = lastUi?.mode !== ui.mode || lastUi.width !== ui.width;
+      if (uiChanged) {
         mode = ui.mode;
         width = clampWidth(ui.width);
         hoverOpen = false;
         cancelClose();
       }
       lastUi = ui;
+      // 表示の内容が変わっていないとき（位置の追従のたびの呼び出しなど）は、DOM を作り直さない
+      if (!uiChanged && view !== null && model !== null && sameModel(model, next)) {
+        model = next;
+        return;
+      }
       model = next;
       view ??= build();
       update();
+    },
+    onRectChange(listener) {
+      rectListeners.add(listener);
+      return () => {
+        rectListeners.delete(listener);
+      };
     },
     getRect() {
       if (view === null) return null;

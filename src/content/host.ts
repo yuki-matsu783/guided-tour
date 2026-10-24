@@ -30,8 +30,17 @@ const HOST_STYLE = [
   'pointer-events: none !important',
 ].join('; ');
 
-/** `<html>` の直下にホスト要素を作り、Shadow DOM に `css` を入れる。 */
-export function createOwnHost(doc: Document, attach: AttachShadow, css: string): OwnHost {
+/**
+ * `<html>` の直下にホスト要素を作り、Shadow DOM に `css` を入れる。
+ * どのホストも z-index は同じ最大値なので、重なりは DOM の順で決まる。
+ * `layer` が `back` のホストは、すでにある自前のホストより前（背面側）に置き、`front` は最後（前面側）に置く。
+ */
+export function createOwnHost(
+  doc: Document,
+  attach: AttachShadow,
+  css: string,
+  layer: 'back' | 'front' = 'front',
+): OwnHost {
   const host = doc.createElement('div');
   host.setAttribute(OWN_HOST_ATTRIBUTE, '');
   host.setAttribute('style', HOST_STYLE);
@@ -39,7 +48,8 @@ export function createOwnHost(doc: Document, attach: AttachShadow, css: string):
   const style = doc.createElement('style');
   style.textContent = css;
   root.appendChild(style);
-  doc.documentElement.appendChild(host);
+  const firstOwn = layer === 'back' ? doc.documentElement.querySelector(`:scope > [${OWN_HOST_ATTRIBUTE}]`) : null;
+  doc.documentElement.insertBefore(host, firstOwn);
   return {
     host,
     root,

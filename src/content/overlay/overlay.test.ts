@@ -332,6 +332,32 @@ describe('操作', () => {
     expect(root(s).querySelector('style')?.textContent).toMatch(/button:focus-visible\s*\{[^}]*outline/);
   });
 
+  it('R-C4: showRestore は、表示を戻すボタンだけを出し、押すと SET_OVERLAY{hidden: false} が送られる', () => {
+    const s = setup({ isTrusted: () => true });
+    paint(s);
+    s.overlay.showRestore();
+    s.overlay.showRestore();
+    expect(root(s).querySelectorAll('.restore')).toHaveLength(1);
+    expect(root(s).querySelectorAll('.dim, .frame, .bubble')).toHaveLength(0);
+    click(q(s, '.restore'));
+    expect(s.sent[0]).toMatchObject({ type: 'SET_OVERLAY', hidden: false, sessionId: sid() });
+    s.overlay.clear();
+    expect(document.querySelector(`[${OWN_HOST_ATTRIBUTE}]`)).toBeNull();
+  });
+
+  it('R-C3: ミニガイドのホストより前に置かれる（同じ z-index でも、ミニガイドが前面になる）', () => {
+    const s = setup();
+    const mini = document.createElement('div');
+    mini.setAttribute(OWN_HOST_ATTRIBUTE, '');
+    document.documentElement.appendChild(mini);
+    paint(s);
+    const hosts = Array.from(document.documentElement.querySelectorAll(`:scope > [${OWN_HOST_ATTRIBUTE}]`));
+    expect(hosts).toHaveLength(2);
+    expect(hosts.at(-1)).toBe(mini);
+    s.overlay.clear();
+    mini.remove();
+  });
+
   it('同じ内容で何度 paint しても、要素は二重にならず、位置の変化に追従する', () => {
     const s = setup();
     paint(s);

@@ -38,8 +38,19 @@ function make() {
   const target = byId('target');
   const other = byId('other');
   const sent: PageToBg[] = [];
-  const overlay = { paint: vi.fn(), clear: vi.fn() };
-  const miniGuide = { renderMiniGuide: vi.fn<(model: MiniGuideModel | null, ui: UiSettings) => void>(), getRect: vi.fn(() => null), remove: vi.fn() };
+  const overlay = { paint: vi.fn(), showRestore: vi.fn(), clear: vi.fn() };
+  const rectListeners = new Set<() => void>();
+  const miniGuide = {
+    renderMiniGuide: vi.fn<(model: MiniGuideModel | null, ui: UiSettings) => void>(),
+    getRect: vi.fn<() => Rect | null>(() => null),
+    onRectChange: vi.fn((listener: () => void) => {
+      rectListeners.add(listener);
+      return () => {
+        rectListeners.delete(listener);
+      };
+    }),
+    remove: vi.fn(),
+  };
   const frames = new Map<number, () => void>();
   let frameSeq = 0;
   const rects = new Map<Element, Rect>();
@@ -86,7 +97,8 @@ function make() {
     measure: (el) => rects.get(el) ?? IN_VIEW,
     scrollIntoView: scroll,
     locate: (t) => {
-      const isDone = t.css?.[0] === '#done';
+      const css = Array.isArray(t.css) ? t.css : t.css?.values;
+      const isDone = css?.[0] === '#done';
       calls.push({ at: Date.now(), done: isDone });
       if (ctx.deferNext && !isDone) {
         ctx.deferNext = false;
@@ -104,6 +116,10 @@ function make() {
     sent,
     overlay,
     miniGuide,
+    /** ミニガイドの領域が変わったことを実行器へ知らせる。 */
+    fireRectChange(): void {
+      for (const l of Array.from(rectListeners)) l();
+    },
     scroll,
     rects,
     target,
@@ -582,7 +598,6 @@ describe('ライフサイクル', () => {
     h.ctx.main = () => NOT_FOUND;
     await tick(1000);
     expect(h.overlay.clear).toHaveBeenCalled();
-    expect(h.locateResults().at(-1)).toMatchObject({ result: { found: false } });
   });
 
   it('T-RUN-39: 介入の条件から外れ、バックグラウンドが CLEAR を送ったとき、枠がすぐ消える', () => {
@@ -608,6 +623,44 @@ describe('ライフサイクル', () => {
     expect(h.mainCalls().length).toBeGreaterThan(4);
     await tick(1100);
     expect(h.lastModel()?.fallbackText).not.toBeNull();
+  });
+
+  it('R-C5: 再検証で見失っても、8秒以内に見つかり直したときは missing（見つからない報告）を送らない', async () => {
+    const h = make();
+    follow(h);
+    h.ctx.main = () => NOT_FOUND;
+    await tick(1000);
+    expect(h.overlay.clear).toHaveBeenCalled();
+    expect(h.locateResults().filter((m) => !m.result.found)).toHaveLength(0);
+    h.ctx.main = () => found(h.target);
+    h.mutate();
+    await tick(2000);
+    expect(h.locateResults().filter((m) => !m.result.found)).toHaveLength(0);
+    expect(h.overlay.paint.mock.calls.at(-1)?.[0]).toBe(h.target);
+  });
+
+  it('R-C5: missing 以外の理由で外れたときは、すぐ報告する', async () => {
+    const h = make();
+    follow(h);
+    h.ctx.main = () => ({ ...NOT_FOUND, reasons: ['conflict'] });
+    await tick(1000);
+    expect(h.locateResults().at(-1)).toMatchObject({ result: { found: false, reasons: ['conflict'] } });
+  });
+
+  it('R-C5: 見失ったあと8秒見つからなければ、その時点で missing を1回報告する', async () => {
+    const h = make();
+    follow(h);
+    h.ctx.main = () => NOT_FOUND;
+    await tick(1000);
+    for (let i = 0; i < 6; i += 1) {
+      h.mutate();
+      await tick(1000);
+    }
+    expect(h.locateResults().filter((m) => !m.result.found)).toHaveLength(0);
+    await tick(2500);
+    const missing = h.locateResults().filter((m) => !m.result.found);
+    expect(missing).toHaveLength(1);
+    expect(missing[0]?.result.reasons).toContain('missing');
   });
 
   it('T-RUN-41: 補助の照合（名前）だけが一致しなくなったとき、枠と吹き出しは残り、nameMismatch が報告される', async () => {
@@ -898,7 +951,8 @@ describe('自分の表示の変化の無視と報告', () => {
     const h = make();
     follow(h);
     h.ctx.main = () => NOT_FOUND;
-    await tick(1000);
+    // missing への変化は、喪失後の探し直しの8秒が過ぎたときに報告される
+    await tick(1000 + SEARCH_WINDOW_MS);
     const results = h.locateResults();
     expect(results).toHaveLength(2);
     expect(results[0]).toMatchObject({ result: { found: true } });
@@ -967,5 +1021,105 @@ describe('完了の目安と自動進行', () => {
     const h = make();
     h.render({ step: STEP_WITH_DONE });
     expect(h.lastModel()).toMatchObject({ hintKind: 'unmet', hintText: '押してください' });
+  });
+});
+
+describe('ミニガイドの領域の変化', () => {
+  it('R-C3: 領域が変わったら、バックグラウンドの RENDER を待たずに、吹き出しと減衰板を新しい領域で描き直す', () => {
+    const h = make();
+    follow(h);
+    h.miniGuide.getRect.mockReturnValue({ left: 972, top: 0, right: 1000, bottom: 800 });
+    h.overlay.paint.mockClear();
+    h.miniGuide.getRect.mockReturnValue({ left: 680, top: 0, right: 1000, bottom: 800 });
+    h.fireRectChange();
+    expect(h.overlay.paint).toHaveBeenCalledTimes(1);
+    expect(h.overlay.paint.mock.calls.at(-1)?.[0]).toBe(h.target);
+    expect(h.overlay.paint.mock.calls.at(-1)?.[4]).toEqual({ left: 680, top: 0, right: 1000, bottom: 800 });
+  });
+
+  it('R-C3: 対象を持っていない間（探索中）に領域が変わっても、何も描かない', () => {
+    const h = make();
+    h.render();
+    h.overlay.paint.mockClear();
+    h.fireRectChange();
+    expect(h.overlay.paint).not.toHaveBeenCalled();
+  });
+
+  it('R-C3: ミニガイドを使わない設定のときは、領域を渡さずに描き直す', () => {
+    const h = make();
+    follow(h, { ui: { ...UI, enabled: false } });
+    h.miniGuide.getRect.mockReturnValue({ left: 680, top: 0, right: 1000, bottom: 800 });
+    h.fireRectChange();
+    expect(h.overlay.paint.mock.calls.at(-1)?.[4]).toBeNull();
+  });
+
+  it('R-C3: ミニガイドの描き直し中に通知が来ても、吹き出しは重ねて描かれない（描き直しは1回）', () => {
+    const h = make();
+    follow(h);
+    h.miniGuide.renderMiniGuide.mockImplementation(() => {
+      h.fireRectChange();
+    });
+    h.overlay.paint.mockClear();
+    h.render({ step: { ...STEP_WITH_DONE, title: '別の見出し' } });
+    expect(h.overlay.paint).toHaveBeenCalledTimes(1);
+  });
+
+  it('R-C3: 破棄したあとの通知では何も描かない', () => {
+    const h = make();
+    follow(h);
+    h.rt.dispose();
+    h.overlay.paint.mockClear();
+    h.fireRectChange();
+    expect(h.overlay.paint).not.toHaveBeenCalled();
+  });
+});
+
+describe('表示を戻すボタン（ミニガイドを表示しない設定）', () => {
+  const OFF = { ...UI, enabled: false };
+  const HIDDEN = { hidden: true };
+
+  it('R-C4: 対象を特定できているとき、ハイライトの描画の中でボタンが出る（今まで通り）', () => {
+    const h = make();
+    follow(h, { ui: OFF, overlay: HIDDEN });
+    expect(h.overlay.paint.mock.calls.at(-1)?.[2]).toEqual({ hidden: true, miniGuideEnabled: false });
+  });
+
+  it('R-C4: 探索中（まだ特定できていない）でも、ボタンだけが出る', () => {
+    const h = make();
+    h.render({ ui: OFF, overlay: HIDDEN });
+    expect(h.overlay.showRestore).toHaveBeenCalled();
+    expect(h.overlay.paint).not.toHaveBeenCalled();
+  });
+
+  it('R-C4: 8秒後の文章だけの案内（対象が見つからない）でも、ボタンが出る', async () => {
+    const h = make();
+    h.render({ ui: OFF, overlay: HIDDEN });
+    h.overlay.showRestore.mockClear();
+    await tick(SEARCH_WINDOW_MS + 500);
+    expect(h.lastModel()?.fallbackText).not.toBeNull();
+    expect(h.overlay.showRestore).toHaveBeenCalled();
+  });
+
+  it('R-C4: 対象を持たない page ステップでも、ボタンが出る', () => {
+    const h = make();
+    h.render({ ui: OFF, overlay: HIDDEN, step: { id: 'p', title: '手順' } });
+    expect(h.overlay.showRestore).toHaveBeenCalled();
+  });
+
+  it('R-C4: 表示が消えていないとき、またはミニガイドを使うときは、ボタンを出さない', () => {
+    const h = make();
+    h.render({ ui: OFF, overlay: { hidden: false } });
+    h.render({ ui: UI, overlay: HIDDEN });
+    expect(h.overlay.showRestore).not.toHaveBeenCalled();
+  });
+
+  it('T-OVL-22（追加）: 完了ページ（donePage）でも、ボタンだけが出る。表示が消えていなければ出ない', () => {
+    const h = make();
+    h.render({ ui: OFF, overlay: HIDDEN, donePage: true });
+    expect(h.overlay.showRestore).toHaveBeenCalled();
+    expect(h.overlay.paint).not.toHaveBeenCalled();
+    h.overlay.showRestore.mockClear();
+    h.render({ ui: OFF, overlay: { hidden: false }, donePage: true });
+    expect(h.overlay.showRestore).not.toHaveBeenCalled();
   });
 });

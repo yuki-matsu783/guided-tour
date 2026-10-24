@@ -21,6 +21,8 @@ const MODEL: MiniGuideModel = {
   shortcut: 'Alt+Shift+G',
 };
 const UI: UiSettings = { enabled: true, mode: 'expanded', width: 320 };
+const MIN: UiSettings = { ...UI, mode: 'minimized' };
+const HOVER: UiSettings = { ...UI, mode: 'hover' };
 
 interface Setup {
   roots: ShadowRoot[];
@@ -211,8 +213,6 @@ describe('展開の表示', () => {
 });
 
 describe('最小化とホバー', () => {
-  const MIN: UiSettings = { ...UI, mode: 'minimized' };
-  const HOVER: UiSettings = { ...UI, mode: 'hover' };
 
   it('T-MG-11: 最小化のとき、幅28 px のバーが表示され、ステップ番号と目安の状態が出る', () => {
     const s = setup();
@@ -361,6 +361,20 @@ describe('幅の変更', () => {
     expect(setUis(s)).toEqual([{ type: 'SET_UI', mode: 'expanded', width: 370 }]);
     ptr(handle, 'pointerup', 650);
     expect(setUis(s)).toHaveLength(1);
+  });
+
+  it('T-MG-22（追加）: clientX が小数でも、幅は整数に丸められる', () => {
+    const s = setup();
+    s.mg.renderMiniGuide(MODEL, UI);
+    const handle = q(s, '.handle');
+    ptr(handle, 'pointerdown', 700.5);
+    ptr(handle, 'pointermove', 670.25);
+    expect(Number.isInteger(width(s))).toBe(true);
+    ptr(handle, 'pointerup', 670.25);
+    const sent = setUis(s);
+    expect(sent).toHaveLength(1);
+    expect(Number.isInteger(sent[0]?.width)).toBe(true);
+    expect(Number.isInteger(s.mg.getRect()?.left)).toBe(true);
   });
 
   it('T-MG-23: 240 px より小さくしようとしたとき、240 px に制限される', () => {
@@ -518,5 +532,160 @@ describe('信頼できない操作', () => {
     ptr(q(s, '.panel'), 'pointerenter');
     q(s, '.panel').dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
     expect(maybe(s, '.body')).toBeNull();
+  });
+});
+
+describe('キーボードの操作とフォーカス', () => {
+  function pageButton(): HTMLButtonElement {
+    const b = document.createElement('button');
+    document.body.appendChild(b);
+    return b;
+  }
+  const focused = (s: Setup): Element | null => root(s).activeElement;
+
+  it('R-C2: ホバーのバーにフォーカスして展開しても、フォーカスは展開後のミニガイドの中に残り、300 ミリ秒後にも閉じない', () => {
+    const s = setup();
+    s.mg.renderMiniGuide(MODEL, HOVER);
+    q(s, '.bar').focus();
+    expect(maybe(s, '.body')).not.toBeNull();
+    expect(focused(s)).not.toBeNull();
+    expect(q(s, '.panel').contains(focused(s))).toBe(true);
+    vi.advanceTimersByTime(HOVER_CLOSE_MS * 5);
+    expect(maybe(s, '.body')).not.toBeNull();
+    expect(q(s, '.panel').contains(focused(s))).toBe(true);
+  });
+
+  it('R-C2: 展開で外れたバーの focusout（relatedTarget なし）が来ても、続く focusin で閉じない', () => {
+    const s = setup();
+    s.mg.renderMiniGuide(MODEL, HOVER);
+    const bar = q(s, '.bar');
+    bar.focus();
+    bar.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+    vi.advanceTimersByTime(HOVER_CLOSE_MS * 5);
+    expect(maybe(s, '.body')).not.toBeNull();
+  });
+
+  it('R-C2: フォーカスがミニガイドの中の別の部品へ移っても閉じず、外へ出たときだけ300ミリ秒後に閉じる', () => {
+    const s = setup();
+    s.mg.renderMiniGuide(MODEL, HOVER);
+    q(s, '.bar').focus();
+    const next = buttonByText(s, '次へ');
+    const panel = q(s, '.panel');
+    next.focus();
+    panel.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: next }));
+    vi.advanceTimersByTime(HOVER_CLOSE_MS * 5);
+    expect(maybe(s, '.body')).not.toBeNull();
+    panel.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: pageButton() }));
+    vi.advanceTimersByTime(HOVER_CLOSE_MS - 1);
+    expect(maybe(s, '.body')).not.toBeNull();
+    vi.advanceTimersByTime(1);
+    expect(maybe(s, '.body')).toBeNull();
+  });
+
+  it('R-C2: Tab の間が300ミリ秒より空いても、展開後の「次へ」まで届く（部品がすべて残っている）', () => {
+    const s = setup();
+    s.mg.renderMiniGuide(MODEL, HOVER);
+    q(s, '.bar').focus();
+    vi.advanceTimersByTime(HOVER_CLOSE_MS * 3);
+    const order = Array.from(root(s).querySelectorAll<HTMLElement>('button, [tabindex="0"]'));
+    expect(order).toContain(buttonByText(s, '次へ'));
+    expect(maybe(s, '.body')).not.toBeNull();
+  });
+
+  it('R-C2: 最小化のバーで Enter を押して展開したとき、フォーカスは展開後のミニガイドの中へ移る', () => {
+    const s = setup();
+    s.mg.renderMiniGuide(MODEL, MIN);
+    q(s, '.bar').focus();
+    key(q(s, '.bar'), 'Enter');
+    expect(maybe(s, '.body')).not.toBeNull();
+    expect(q(s, '.panel').contains(focused(s))).toBe(true);
+  });
+
+  it('R-C2: ホバーのバーで Enter を押して一時的に展開したときも、フォーカスは中へ移る', () => {
+    const s = setup();
+    s.mg.renderMiniGuide(MODEL, HOVER);
+    const bar = q(s, '.bar');
+    bar.focus();
+    key(bar, 'Enter');
+    expect(q(s, '.panel').contains(focused(s))).toBe(true);
+    vi.advanceTimersByTime(HOVER_CLOSE_MS * 5);
+    expect(maybe(s, '.body')).not.toBeNull();
+  });
+});
+
+describe('描き直しと領域の通知', () => {
+  it('R-C6: 同じ内容で再度呼んでも、DOM を作り直さない', () => {
+    const s = setup();
+    s.mg.renderMiniGuide(MODEL, UI);
+    const records: MutationRecord[] = [];
+    const observer = new MutationObserver((r) => records.push(...r));
+    observer.observe(root(s), { subtree: true, childList: true, characterData: true, attributes: true });
+    s.mg.renderMiniGuide({ ...MODEL }, { ...UI });
+    records.push(...observer.takeRecords());
+    observer.disconnect();
+    expect(records).toHaveLength(0);
+  });
+
+  it('R-C6: 内容が変わったときは描き直す', () => {
+    const s = setup();
+    s.mg.renderMiniGuide(MODEL, UI);
+    s.mg.renderMiniGuide({ ...MODEL, title: '別の見出し' }, UI);
+    expect(q(s, '.title').textContent).toBe('別の見出し');
+    s.mg.renderMiniGuide({ ...MODEL, title: '別の見出し' }, { ...UI, width: 400 });
+    expect(width(s)).toBe(400);
+  });
+
+  it('R-C3: 領域が変わると、通知される（ホバーの展開・閉じる・モードの切り替え・ドラッグ・取り除き）', () => {
+    const s = setup();
+    const onChange = vi.fn();
+    s.mg.onRectChange(onChange);
+    s.mg.renderMiniGuide(MODEL, HOVER);
+    onChange.mockClear();
+
+    ptr(q(s, '.panel'), 'pointerenter');
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(s.mg.getRect()?.left).toBe(1000 - 320);
+
+    ptr(q(s, '.panel'), 'pointerleave');
+    vi.advanceTimersByTime(HOVER_CLOSE_MS);
+    expect(onChange).toHaveBeenCalledTimes(2);
+    expect(s.mg.getRect()?.left).toBe(1000 - 28);
+
+    onChange.mockClear();
+    s.mg.renderMiniGuide(MODEL, UI);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    onChange.mockClear();
+    click(buttonByText(s, '最小化'));
+    expect(onChange).toHaveBeenCalledTimes(1);
+
+    click(q(s, '.bar'));
+    onChange.mockClear();
+    const handle = q(s, '.handle');
+    ptr(handle, 'pointerdown', 700);
+    ptr(handle, 'pointermove', 680);
+    expect(onChange).toHaveBeenCalledTimes(1);
+
+    onChange.mockClear();
+    s.mg.remove();
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('R-C3: 領域が変わらない描き直しでは通知しない', () => {
+    const s = setup();
+    const onChange = vi.fn();
+    s.mg.onRectChange(onChange);
+    s.mg.renderMiniGuide(MODEL, UI);
+    onChange.mockClear();
+    s.mg.renderMiniGuide({ ...MODEL, title: 'x' }, UI);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('R-C3: 通知の購読を解除できる', () => {
+    const s = setup();
+    const onChange = vi.fn();
+    const stop = s.mg.onRectChange(onChange);
+    stop();
+    s.mg.renderMiniGuide(MODEL, UI);
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

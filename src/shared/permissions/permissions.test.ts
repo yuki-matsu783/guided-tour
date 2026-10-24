@@ -6,6 +6,7 @@ function tourOf(...origins: string[]): { origins: string[]; steps: { url: { orig
 }
 
 function fakeApi(opts: { granted?: string[]; allow?: boolean } = {}): {
+  granted: string[];
   api: PermissionsApi;
   request: ReturnType<typeof vi.fn>;
   fire: (removed: RemovedPermissions) => void;
@@ -13,8 +14,9 @@ function fakeApi(opts: { granted?: string[]; allow?: boolean } = {}): {
 } {
   const listeners = new Set<(r: RemovedPermissions) => void>();
   const requestFn = vi.fn<PermissionsApi['request']>(() => Promise.resolve(opts.allow ?? true));
+  const granted = opts.granted ?? [];
   const api: PermissionsApi = {
-    contains: (q) => Promise.resolve(q.origins.every((o) => (opts.granted ?? []).includes(o))),
+    contains: (q) => Promise.resolve(q.origins.every((o) => granted.includes(o))),
     request: requestFn,
     onRemoved: {
       addListener: (l) => {
@@ -25,7 +27,7 @@ function fakeApi(opts: { granted?: string[]; allow?: boolean } = {}): {
       },
     },
   };
-  return { api, request: requestFn, fire: (r) => {
+  return { api, granted, request: requestFn, fire: (r) => {
       for (const l of listeners) l(r);
     },
     listeners,
@@ -108,26 +110,53 @@ describe('request', () => {
 });
 
 describe('watchRemoved', () => {
-  it('T-PERM-14: 実行中のツアーの権限が取り消されたら onLost を呼ぶ', () => {
-    const f = fakeApi();
+  const flush = async (): Promise<void> => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  };
+
+  it('T-PERM-14: 実行中のツアーの権限が取り消されたら onLost を呼ぶ', async () => {
+    const f = fakeApi({ granted: ['https://a.example/*'] });
     const onLost = vi.fn();
     watchRemoved(f.api, () => tourOf('https://a.example', 'https://b.example'), onLost);
     f.fire({ origins: ['https://b.example/*'] });
+    await flush();
     expect(onLost).toHaveBeenCalledTimes(1);
   });
-  it('T-PERM-15: 無関係なオリジンの取り消しでは呼ばない', () => {
-    const f = fakeApi();
+  it('T-PERM-15: 無関係なオリジンの取り消しでは呼ばない', async () => {
+    const f = fakeApi({ granted: ['https://a.example/*'] });
     const onLost = vi.fn();
     watchRemoved(f.api, () => tourOf('https://a.example'), onLost);
     f.fire({ origins: ['https://other.example/*'] });
     f.fire({});
+    await flush();
     expect(onLost).not.toHaveBeenCalled();
   });
-  it('T-PERM-16: 実行中のツアーがなければ何も起きない', () => {
+  it('T-PERM-16: 実行中のツアーがなければ何も起きない', async () => {
     const f = fakeApi();
     const onLost = vi.fn();
     watchRemoved(f.api, () => null, onLost);
     f.fire({ origins: ['https://a.example/*'] });
+    await flush();
+    expect(onLost).not.toHaveBeenCalled();
+  });
+  it('S-1: 通知の形に頼らず、contains で確かめ直して偽なら onLost を呼ぶ', async () => {
+    for (const notified of [['*://a.example/*'], ['https://*/*'], ['<all_urls>'], ['https://a.example/path/*'], undefined]) {
+      const f = fakeApi({ granted: [] });
+      const onLost = vi.fn();
+      watchRemoved(f.api, () => tourOf('https://a.example'), onLost);
+      f.fire({ origins: notified });
+      await flush();
+      expect(onLost, String(notified)).toHaveBeenCalledTimes(1);
+    }
+  });
+  it('S-1: contains が真なら、通知にそのパターンがあっても onLost を呼ばない', async () => {
+    const f = fakeApi({ granted: ['https://a.example/*'] });
+    const onLost = vi.fn();
+    watchRemoved(f.api, () => tourOf('https://a.example'), onLost);
+    f.fire({ origins: ['https://a.example/*'] });
+    await flush();
     expect(onLost).not.toHaveBeenCalled();
   });
   it('解除すると以後は呼ばれない', () => {

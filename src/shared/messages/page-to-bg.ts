@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import { GenSchema, PageSeqSchema, SessionIdSchema } from '../ids/index.ts';
 import { LocateSummarySchema, LogMessageSchema } from './common.ts';
-import { GotoSchema, ScrollToTargetSchema, SetOverlaySchema, SetUiSchema } from './operations.ts';
+import { GotoSchema, PageSetUiSchema, ScrollToTargetSchema, SetOverlaySchema } from './operations.ts';
 
 const report = { sessionId: SessionIdSchema, gen: GenSchema, pageSeq: PageSeqSchema } as const;
 
@@ -23,7 +23,7 @@ export const PageToBgSchema = z.discriminatedUnion('type', [
   GotoSchema,
   ScrollToTargetSchema,
   SetOverlaySchema,
-  SetUiSchema,
+  PageSetUiSchema,
   LogMessageSchema,
 ]);
 export type PageToBg = z.output<typeof PageToBgSchema>;

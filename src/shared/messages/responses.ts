@@ -19,6 +19,7 @@ export const REJECT_REASONS = [
   'noPageStep',
   'notBound',
   'noOpenUrl',
+  'tabBoundToOtherRole',
   'openFailed',
   'internal',
 ] as const;
