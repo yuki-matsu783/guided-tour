@@ -19,7 +19,7 @@ const REJECT_TEXT = {
   notOverwritten: 'ツアーは上書きされていません',
   tourNotFound: 'ツアーが見つかりません。一覧を再読み込みしてください',
   permissionNotRestored: 'サイトへのアクセスがまだ許可されていません。許可してから再開してください',
-  outsideOrigins: '開こうとしたページが、ツアーの宣言したサイトの外にあります',
+  outsideOrigins: '開こうとしたページは、ツアーに書かれたサイトの外にあります',
   noPageStep: 'このステップは、ブラウザの外などで行う手順です',
   notBound: 'このステップの役割のタブが、まだ対応付けられていません',
   noOpenUrl: 'このステップには、開くページが定められていません',

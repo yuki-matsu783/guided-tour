@@ -51,7 +51,7 @@ export function TabControls({ tab, roleLabel, canOpen }: TabControlsProps): Reac
     <section className="tab-controls" aria-label="タブの操作">
       {tab.status === 'unsupported' && (
         <p className="notice" role="status">
-          このページでは表示できません（読み込み中、またはブラウザが制限しているページです）。ページを開き直したら「再確認」を押してください
+          このページでは表示できません（読み込み中、またはブラウザが制限しているページです）。ページを開き直してから、「再確認」を押してください
         </p>
       )}
       {tab.status === 'missing' && (

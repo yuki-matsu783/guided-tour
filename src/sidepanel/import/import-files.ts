@@ -47,11 +47,11 @@ async function readPackage(
   if (!isZip && !lower.endsWith('.yaml') && !lower.endsWith('.yml')) {
     return { errors: [issue(name, '', '取り込めるのは .yaml・.yml・.zip のファイルだけです')] };
   }
-  const yamlLimit = `${TOUR_FILE} が上限（${formatBytesLimit(PACKAGE_LIMITS.yamlBytes)}）を超えています`;
+  const yamlLimit = `YAML ファイルが上限（${formatBytesLimit(PACKAGE_LIMITS.yamlBytes)}）を超えています`;
 
   if (!isZip) {
     if (file.size > PACKAGE_LIMITS.yamlBytes) {
-      return { errors: [issue(name, '', yamlLimit.replace(TOUR_FILE, 'YAML ファイル'))] };
+      return { errors: [issue(name, '', yamlLimit)] };
     }
     const text = decodeUtf8(new Uint8Array(await file.arrayBuffer()));
     if (text === null) return { errors: [issue(name, '', 'YAML ファイルを UTF-8 として読めません')] };
