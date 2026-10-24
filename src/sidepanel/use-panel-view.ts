@@ -1,7 +1,7 @@
 /**
  * バックグラウンドの状態の写し（`PanelView`）を持つ。
  * 最初に `GET_STATE` で取得し、応答が無い・形が違う間は1秒ごとに取り直す（それまでは null）。
- * `TOUR_STATE_CHANGED` は検証して、120 ミリ秒に間引いて反映する。`refresh` は取り直し。
+ * `TOUR_STATE_CHANGED` は検証して、120 ミリ秒に間引いて反映する。取得の応答は、待っている通知を取り消さず、通知を反映したあとで取り直して最新に揃える。`refresh` は取り直し。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PanelViewSchema, parseBgToPanel } from '../shared/messages/index.ts';
@@ -26,8 +26,17 @@ export function usePanelView(deps: Pick<PanelDeps, 'send' | 'subscribe'>): Panel
   useEffect(() => {
     let disposed = false;
     let retry: ReturnType<typeof setTimeout> | null = null;
+    /** 通知が待っている間に取得の応答を反映したか。そのとき、通知を反映したあとで取り直し、最新に揃える。 */
+    let refetchAfterNotice = false;
+    let noticePending = false;
     const coalescer = createCoalescer<PanelView>(RENDER_INTERVAL_MS, (next) => {
-      if (!disposed) setView(next);
+      noticePending = false;
+      if (disposed) return;
+      setView(next);
+      if (refetchAfterNotice) {
+        refetchAfterNotice = false;
+        load();
+      }
     });
 
     const scheduleRetry = (): void => {
@@ -47,8 +56,9 @@ export function usePanelView(deps: Pick<PanelDeps, 'send' | 'subscribe'>): Panel
             scheduleRetry();
             return;
           }
-          // 取得は、待っている通知より新しい。すぐに反映する
-          coalescer.cancel();
+          // 待っている通知は取り消さない。取得をすぐに反映し、通知はあとで反映する。
+          // どちらが新しいかは分からないので、通知を反映したあとにもう一度取得して、最新に揃える
+          if (noticePending) refetchAfterNotice = true;
           setView(parsed.data);
         },
         () => {
@@ -60,7 +70,9 @@ export function usePanelView(deps: Pick<PanelDeps, 'send' | 'subscribe'>): Panel
 
     const unsubscribe = deps.subscribe((raw) => {
       const message = parseBgToPanel(raw);
-      if (message !== null) coalescer.push(message.view);
+      if (message === null) return;
+      noticePending = true;
+      coalescer.push(message.view);
     });
     load();
 

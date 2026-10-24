@@ -4,7 +4,7 @@
  * - ページ側 → バックグラウンド: CDP で拡張機能のコンテンツスクリプトの実行環境へ入り、`chrome.runtime.sendMessage` を呼ぶ
  * - バックグラウンド → ページ側: Service Worker の `chrome.tabs.sendMessage` を呼ぶ（送った指示は、呼び出しを包んで控える）
  * - サイドパネル → バックグラウンド: サイドパネルのページから `chrome.runtime.sendMessage` を呼ぶ
- * 実行中の上書き・削除は、取り込み画面のある一覧を別のサイドパネルで開き、確認の画面を出したまま実行を始めて、あとで承認する。
+ * 実行中の上書き・削除は、実行中の画面から「ツアーの一覧」へ移って行う（実際の操作の経路）。
  */
 import type { Page } from '@playwright/test';
 import { z } from 'zod';
@@ -340,14 +340,16 @@ test('E-61: 前のツアーのサイドパネルから送った「終了」「�
 
 interface Overwriting {
   panel: SidePanel;
-  other: SidePanel;
   tab: Page;
   tour: TourSpec;
 }
 
+/** 上書きの確認に出る、実行中のツアーを上書きする旨の一文。 */
+const RUNNING_OVERWRITE_TEXT = 'このツアーは実行中です。上書きすると、一時中断になります';
+
 /**
  * 実行中のツアーを、同じ ID の新版で上書きする。
- * 実行中のサイドパネルには取り込み画面が無いので、別のサイドパネルで先に確認の画面を出しておき、実行を始めてから承認する。
+ * 実行中の画面から「ツアーの一覧」へ移り、そこで取り込む（実際の操作の経路）。確認の文面に実行中の旨が出ることも確かめ、承認する。
  */
 async function overwriteWhileRunning(
   ctx: {
@@ -363,11 +365,6 @@ async function overwriteWhileRunning(
   const panel = await ctx.openPanel();
   const tour = standardTour({ origin: ctx.server.origin, id: 'e2e-rev', name: '改訂するツアー' });
   await importTour(panel, tour);
-  const other = await ctx.openPanel();
-  await other.page.getByRole('button', { name: '再読み込み' }).click();
-  await other.importFiles([yamlFile(makeNewVersion(tour))]);
-  await expect(other.page.getByRole('alertdialog')).toContainText(`ID「${tour.id}」`);
-
   await beginTour(panel, tour.name, tab);
   for (let i = 0; i < stepsToAdvance; i++) {
     await sleep(MOVE_WAIT_MS);
@@ -376,8 +373,15 @@ async function overwriteWhileRunning(
   }
   await expectMiniGuideStep(ownUi(tab), `${String(stepsToAdvance + 1)}/4`);
 
-  await other.confirm();
-  return { panel, other, tab, tour };
+  // 実行中の画面から一覧へ移る。開始のボタンは出ず、取り込みと削除が使える
+  await panel.openList();
+  await expect(panel.card(tour.name).getByRole('button', { name: '最初から' })).toHaveCount(0);
+  await panel.importFiles([yamlFile(makeNewVersion(tour))]);
+  const dialog = panel.page.getByRole('alertdialog');
+  await expect(dialog).toContainText(`ID「${tour.id}」`);
+  await expect(dialog).toContainText(RUNNING_OVERWRITE_TEXT);
+  await panel.confirm();
+  return { panel, tab, tour };
 }
 
 function renamed(old: TourSpec): TourSpec {
@@ -463,19 +467,18 @@ test('E-64: 実行中のツアー（取り込み済み）を削除すると、�
   const panel = await openPanel();
   const tour = standardTour({ origin: server.origin });
   await importTour(panel, tour);
-  // 実行中のサイドパネルには一覧が無いので、別のサイドパネルで削除の確認を出しておく
-  const other = await openPanel();
-  await other.page.getByRole('button', { name: '再読み込み' }).click();
-  await other.press(other.card(tour.name).getByRole('button', { name: '削除' }));
-  await expect(other.page.getByRole('alertdialog')).toBeVisible();
-
   await beginTour(panel, tour.name, tab);
   await sleep(MOVE_WAIT_MS);
   await panel.next();
   await expectPanelStep(panel, '2/4');
   await expect.poll(() => hasProgress(ext, tour.id)).toBe(true);
 
-  await other.confirm();
+  // 実行中の画面から一覧へ移って削除する。確認に、実行中であることが出る
+  await panel.openList();
+  await panel.press(panel.card(tour.name).getByRole('button', { name: '削除' }));
+  const dialog = panel.page.getByRole('alertdialog');
+  await expect(dialog).toContainText('このツアーは実行中です。削除すると、ツアーは終了し、進捗も消えます');
+  await panel.confirm();
   await expect(panel.page.locator('.screen-running')).toHaveCount(0);
   await expect(panel.page.getByRole('status').filter({ hasText: '実行中のツアーが削除されたため、終了しました' })).toBeVisible();
   await expectNoOwnUi(ownUi(tab));

@@ -1,7 +1,13 @@
-/** 実行中・一時中断中の画面に共通の小さな部品（ツアー名の見出し・保存の失敗・一時中断と終了の違い）。 */
+/** 実行中・一時中断中の画面に共通の小さな部品（ツアー名の見出し・一覧と設定への入口・保存の失敗・一時中断と終了の違い）。 */
 import type { ReactNode } from 'react';
 import type { PanelView } from '../../shared/messages/index.ts';
 import { SOURCE_LABEL } from '../format.ts';
+
+/** 実行中・一時中断中の画面が受け取る、一覧と設定へ移る操作。 */
+export interface ScreenNav {
+  onOpenList: () => void;
+  onOpenSettings: () => void;
+}
 
 export const SAVE_ERROR_TEXT = '保存されていません。再起動すると前の位置に戻る可能性があります';
 
@@ -56,6 +62,20 @@ export function PauseStopExplanation(): ReactNode {
       <p>
         <strong>終了</strong>：ツアーをやめて、進捗を破棄します。次回は最初から始まります。
       </p>
+    </div>
+  );
+}
+
+/** 実行中・一時中断中の画面から、ツアーの一覧（取り込み・削除）と設定へ移る入口。 */
+export function ScreenLinks({ onOpenList, onOpenSettings }: ScreenNav): ReactNode {
+  return (
+    <div className="header-actions">
+      <button type="button" data-focus-id="open-list" onClick={onOpenList}>
+        ツアーの一覧
+      </button>
+      <button type="button" data-focus-id="open-settings" onClick={onOpenSettings}>
+        設定
+      </button>
     </div>
   );
 }

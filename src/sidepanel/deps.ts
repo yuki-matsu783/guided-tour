@@ -55,6 +55,7 @@ export interface PanelDeps {
   saveFile(name: string, text: string, mime: string): void;
   createObjectUrl(blob: Blob): string;
   revokeObjectUrl(url: string): void;
+  /** 移動の受け付けの待ちに使う時計（ミリ秒）。巻き戻らないこと。 */
   now(): number;
   logger: Logger;
 }
@@ -174,7 +175,8 @@ export function createChromeDeps(): PanelDeps {
     revokeObjectUrl: (url) => {
       URL.revokeObjectURL(url);
     },
-    now: () => Date.now(),
+    // 移動の受け付けの待ちに使う。時計の巻き戻しの影響を受けない、単調に進む時計
+    now: () => performance.now(),
     logger,
   };
 }

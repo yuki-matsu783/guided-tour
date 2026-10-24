@@ -12,7 +12,8 @@ import { usePanel } from '../context.ts';
 import { roleLabelOf } from '../role-label.ts';
 import { useAssetUrl, useStepBody, useTourContent } from '../use-content.ts';
 import { Markdown } from './Markdown.tsx';
-import { PauseStopExplanation, RestartedNotice, SaveErrorNotice, TourHeading } from './common.tsx';
+import { PauseStopExplanation, RestartedNotice, SaveErrorNotice, ScreenLinks, TourHeading } from './common.tsx';
+import type { ScreenNav } from './common.tsx';
 import { TabControls } from './TabControls.tsx';
 
 export const HINT_TEXT = {
@@ -110,7 +111,7 @@ function StepList(): ReactNode {
   );
 }
 
-export function RunningScreen(): ReactNode {
+export function RunningScreen({ onOpenList, onOpenSettings }: ScreenNav): ReactNode {
   const { deps, view, ops, assets } = usePanel();
   const tour = view.tour;
   const content = useTourContent(deps, tour);
@@ -132,7 +133,9 @@ export function RunningScreen(): ReactNode {
 
   return (
     <div className="screen screen-running">
-      <TourHeading view={view} />
+      <TourHeading view={view}>
+        <ScreenLinks onOpenList={onOpenList} onOpenSettings={onOpenSettings} />
+      </TourHeading>
       <SaveErrorNotice view={view} />
       <RestartedNotice view={view} />
       <article className="step-body">

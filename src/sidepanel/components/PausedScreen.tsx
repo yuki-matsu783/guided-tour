@@ -5,7 +5,8 @@
 import type { ReactNode } from 'react';
 import type { PauseReason } from '../../shared/messages/index.ts';
 import { usePanel } from '../context.ts';
-import { PauseStopExplanation, SaveErrorNotice, TourHeading } from './common.tsx';
+import { PauseStopExplanation, SaveErrorNotice, ScreenLinks, TourHeading } from './common.tsx';
+import type { ScreenNav } from './common.tsx';
 
 const REASON_TEXT = {
   user: '一時中断中です。ページ上の表示とミニガイドは消えています',
@@ -15,14 +16,16 @@ const REASON_TEXT = {
     '同じ ID のツアーが新しい内容に上書きされたため、一時中断しました。新しい内容で続けるか、終了を選んでください',
 } as const satisfies Record<PauseReason, string>;
 
-export function PausedScreen(): ReactNode {
+export function PausedScreen({ onOpenList, onOpenSettings }: ScreenNav): ReactNode {
   const { view, ops } = usePanel();
   const reason = view.pauseReason ?? 'user';
   const stepTitle = view.steps[view.stepIndex]?.title;
 
   return (
     <div className="screen screen-paused">
-      <TourHeading view={view} />
+      <TourHeading view={view}>
+        <ScreenLinks onOpenList={onOpenList} onOpenSettings={onOpenSettings} />
+      </TourHeading>
       <SaveErrorNotice view={view} />
       <p className="notice" role="status">
         {REASON_TEXT[reason]}

@@ -14,6 +14,8 @@ import { formatDateTime } from '../format.ts';
 
 interface SettingsScreenProps {
   onBack: () => void;
+  /** 戻るボタンの表示名。一覧から開いたときは「一覧へ戻る」、実行中・一時中断中の画面から開いたときはその画面の名前。 */
+  backLabel: string;
   /** 消去の確認を出す。承認されたら `proceed` を呼ぶ。 */
   confirmClear: (proceed: () => void) => void;
 }
@@ -69,7 +71,7 @@ function DiagnosticsList({ entries, nameOf }: { entries: readonly DiagnosticEntr
   );
 }
 
-export function SettingsScreen({ onBack, confirmClear }: SettingsScreenProps): ReactNode {
+export function SettingsScreen({ onBack, backLabel, confirmClear }: SettingsScreenProps): ReactNode {
   const { deps, view, ops } = usePanel();
   const [localLevel, setLocalLevel] = useState<Level | null>(null);
   const [diagnostics, setDiagnostics] = useState<Diagnostics>({ status: 'loading' });
@@ -141,7 +143,7 @@ export function SettingsScreen({ onBack, confirmClear }: SettingsScreenProps): R
           設定
         </h1>
         <button type="button" data-focus-id="settings-back" onClick={onBack}>
-          一覧へ戻る
+          {backLabel}
         </button>
       </header>
       {message !== null && (

@@ -421,6 +421,37 @@ test('E-11: 「次へ」を素早く連打しても、サイドパネルとミ�
   await expectMiniGuideStep(ui, '4/4');
 });
 
+test('E-11（追加）: 新しい表示から 600 ミリ秒待てば、「次へ」を1回だけ押して（押し直さずに）1 ステップ進む', async ({
+  server,
+  openTab,
+  openPanel,
+}) => {
+  const tab = await openTab(server.url('/internal/'));
+  const panel = await openPanel();
+  const ui = ownUi(tab);
+  const tour = standardTour({ origin: server.origin });
+  await importTour(panel, tour);
+  await beginTour(panel, tour.name, tab);
+  await expectMiniGuideStep(ui, '1/4');
+
+  // サイドパネルの「次へ」を、受け付けの待ち（500 ミリ秒）が過ぎてから1回だけ押す
+  await sleep(600);
+  await panel.press(panel.page.getByRole('button', { name: '次へ', exact: true }));
+  await expectPanelStep(panel, '2/4');
+  await expectMiniGuideStep(ui, '2/4');
+
+  // ミニガイドの「次へ」も、新しい表示から 600 ミリ秒待って1回だけ押す
+  await sleep(600);
+  const miniNext = (await ui.nodes('.panel .actions button')).find((b) => b.text.trim() === '次へ');
+  if (miniNext === undefined) throw new Error('ミニガイドの次へが見つからない');
+  await tab.mouse.click(miniNext.rect.x + miniNext.rect.width / 2, miniNext.rect.y + miniNext.rect.height / 2);
+  await expectPanelStep(panel, '3/4');
+  await expectMiniGuideStep(ui, '3/4');
+  // 二重には進まない
+  await sleep(1000);
+  await expectPanelStep(panel, '3/4');
+});
+
 test('E-12: URL 条件と完了ページが別のステップは、完了ページへ移っても不一致の案内を出さず、ハイライトもしない', async ({
   server,
   openTab,

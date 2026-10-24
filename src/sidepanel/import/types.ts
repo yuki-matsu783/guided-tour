@@ -7,6 +7,10 @@ export type { Issue };
 
 /** 上書きの確認に渡す情報。 */
 export interface OverwriteRequest {
+  /** 取り込もうとしているファイルの名前（どの取り込みの確認かを示す） */
+  fileName: string;
+  /** 取り込もうとしているツアーの名前 */
+  tourName: string;
   tourId: string;
   /** 置き換える相手。取り込み済みがあればそれ（`imported`）、同梱だけなら `bundled` */
   existingSource: 'bundled' | 'imported';

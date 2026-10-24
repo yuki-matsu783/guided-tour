@@ -146,7 +146,7 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
     }));
   const setTimer = deps.setTimer ?? defaultTimers.setTimer;
   const clearTimer = deps.clearTimer ?? defaultTimers.clearTimer;
-  const gate = createMoveGate(deps.now ?? ((): number => Date.now()));
+  const gate = createMoveGate(deps.now ?? ((): number => performance.now()));
 
   let view: View | null = null;
   let model: MiniGuideModel | null = null;

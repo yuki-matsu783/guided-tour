@@ -1,28 +1,17 @@
 /**
- * ツアーの取り込みエリア。ドラッグ＆ドロップとファイル選択（複数）で `importFiles` を呼び、結果を並べる。
+ * ツアーの取り込みエリア。ドラッグ＆ドロップとファイル選択（複数）で取り込みを始め、進行と結果を並べる。
  * 取り込み中も、ほかの操作（終了・一時中断など）は止めない。
  * 結果は、成功（ツアー名・対象サイト・警告）、取り消し、失敗（ファイル名・行番号・場所・理由）の順に出す。
  */
 import { useRef, useState } from 'react';
 import type { DragEvent, ReactNode } from 'react';
-import type { CatalogEntry } from '../../shared/messages/index.ts';
-import type { PanelDeps } from '../deps.ts';
-import type { ImportResult, Issue, OverwriteRequest } from '../import/index.ts';
+import type { ImportResult, Issue } from '../import/index.ts';
+import type { Importer } from '../use-importer.ts';
 
 interface ImportAreaProps {
-  deps: PanelDeps;
-  catalog: readonly CatalogEntry[];
-  confirmOverwrite: (request: OverwriteRequest) => Promise<boolean>;
-  getRunningTourId: () => string | null;
-  /** 取り込みが終わった（一覧を取り直す）。 */
-  onImported: () => void;
+  /** 取り込みの進行・結果。アプリの状態として持つので、この部品が消えても失われない。 */
+  importer: Importer;
 }
-
-const UNEXPECTED: ImportResult = {
-  status: 'rejected',
-  fileName: '',
-  errors: [{ file: '', line: null, path: '', message: '取り込み中に予期しないエラーが起きました' }],
-};
 
 function IssueItem({ issue, label }: { issue: Issue; label: string }): ReactNode {
   return (
@@ -77,49 +66,10 @@ function ResultItem({ result }: { result: ImportResult }): ReactNode {
   );
 }
 
-/** ログに残す結果の種類。 */
-function summarize(results: readonly ImportResult[]): 'imported' | 'cancelled' | 'rejected' {
-  if (results.some((r) => r.status === 'imported')) return 'imported';
-  if (results.some((r) => r.status === 'cancelled')) return 'cancelled';
-  return 'rejected';
-}
-
-export function ImportArea(props: ImportAreaProps): ReactNode {
-  const { deps, catalog, confirmOverwrite, getRunningTourId, onImported } = props;
-  const [results, setResults] = useState<readonly ImportResult[] | null>(null);
-  const [busy, setBusy] = useState(false);
+export function ImportArea({ importer }: ImportAreaProps): ReactNode {
+  const { busy, results, run, dismissResults } = importer;
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-
-  const run = (files: File[]): void => {
-    if (files.length === 0) return;
-    setBusy(true);
-    const bytes = files.reduce((sum, f) => sum + f.size, 0);
-    const bundledFromCatalog = catalog.filter((e) => e.source === 'bundled').map((e) => e.id);
-    void deps
-      .importFiles(files, {
-        confirmOverwrite,
-        getRunningTourId,
-        getBundledTourIds: async () => [...new Set([...(await deps.bundledTourIds()), ...bundledFromCatalog])],
-        notifyCatalogChanged: async (change) => {
-          await deps.send({ type: 'CATALOG_CHANGED', tourId: change.tourId, hash: change.hash });
-        },
-      })
-      .then(
-        (done) => {
-          deps.logger.info('import.result', { result: summarize(done), files: files.length, bytes });
-          setResults(done);
-        },
-        () => {
-          deps.logger.info('import.result', { result: 'failed', files: files.length, bytes });
-          setResults([UNEXPECTED]);
-        },
-      )
-      .finally(() => {
-        setBusy(false);
-        onImported();
-      });
-  };
 
   const onDrop = (event: DragEvent): void => {
     event.preventDefault();
@@ -180,9 +130,7 @@ export function ImportArea(props: ImportAreaProps): ReactNode {
           </ul>
           <button
             type="button"
-            onClick={() => {
-              setResults(null);
-            }}
+            onClick={dismissResults}
           >
             結果を閉じる
           </button>

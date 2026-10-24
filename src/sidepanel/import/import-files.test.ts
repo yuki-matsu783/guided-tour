@@ -512,7 +512,7 @@ describe('上書きの確認', () => {
     expect(confirm).not.toHaveBeenCalled();
     const [result] = await importFiles([file('v2.yaml', tourYaml({ id: 'same', name: '新' }))], deps);
     expect(confirm).toHaveBeenCalledTimes(1);
-    expect(confirm).toHaveBeenCalledWith({ tourId: 'same', existingSource: 'imported', running: false });
+    expect(confirm).toHaveBeenCalledWith({ fileName: 'v2.yaml', tourName: '新', tourId: 'same', existingSource: 'imported', running: false });
     expect(result?.status).toBe('imported');
     const tours = (await snapshot(db)).tours;
     expect(tours).toHaveLength(1);
@@ -534,7 +534,7 @@ describe('上書きの確認', () => {
   it('T-PKG-68: 置き換え対象が同梱ツアーのとき、確認に同梱版の置き換えであることが渡される', async () => {
     const { deps, confirm } = await setup({ getBundledTourIds: () => Promise.resolve(['bundled-1']) });
     await importFiles([file('a.yaml', tourYaml({ id: 'bundled-1' }))], deps);
-    expect(confirm).toHaveBeenCalledWith({ tourId: 'bundled-1', existingSource: 'bundled', running: false });
+    expect(confirm).toHaveBeenCalledWith({ fileName: 'a.yaml', tourName: 'サンプル', tourId: 'bundled-1', existingSource: 'bundled', running: false });
   });
 
   it('T-PKG-69: 置き換え対象が実行中のツアーのとき、確認に実行中であることが渡される', async () => {
@@ -543,7 +543,7 @@ describe('上書きの確認', () => {
       getRunningTourId: () => Promise.resolve('run'),
     });
     await importFiles([file('a.yaml', tourYaml({ id: 'run' }))], deps);
-    expect(confirm).toHaveBeenCalledWith({ tourId: 'run', existingSource: 'bundled', running: true });
+    expect(confirm).toHaveBeenCalledWith({ fileName: 'a.yaml', tourName: 'サンプル', tourId: 'run', existingSource: 'bundled', running: true });
   });
 
   it('T-PKG-70: 同じ ID がなければ、確認は呼ばれない', async () => {

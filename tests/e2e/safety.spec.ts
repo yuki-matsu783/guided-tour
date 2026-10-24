@@ -33,6 +33,8 @@ function validTour(origin: string, extra: Partial<TourSpec> = {}): TourSpec {
 const MOVE_WAIT_MS = 600;
 
 const MB = 1024 * 1024;
+/** 重い取り込みのファイル数。取り込みが速く終わる機械でも、一時中断・終了の操作と重なる数。 */
+const BOMB_COUNT = 16;
 
 test('E-69: 画像でない data URL を含むツアーは拒否され、理由が表示される', async ({ server, openPanel }) => {
   const panel = await openPanel();
@@ -116,7 +118,7 @@ test('E-69: 大量のファイルを含む zip は拒否され、理由が表示
   expect(reason).toContain('ファイル数が上限');
 });
 
-test('E-69: 重い取り込みの最中も、サイドパネルの一時中断・終了の操作を受け付ける（取り込み中の画面操作は手動で補う）', async ({
+test('E-69: 重い取り込みの最中も、サイドパネルの一時中断・終了の操作を受け付け、取り込みの拒否の理由はあとで一覧に表示される', async ({
   ext,
   server,
   openTab,
@@ -126,21 +128,35 @@ test('E-69: 重い取り込みの最中も、サイドパネルの一時中断�
   const panel = await openPanel();
   const tour = tourOn(server.origin, { prefix: '/internal' }, [{ id: 'only', title: '唯一の手順' }], { id: 'e2e-running', name: '実行中のツアー' });
   await importTour(panel, tour);
-  // 実行中の画面には取り込み画面が無いので、一覧にいる間に重い取り込みを始め、そのまま実行を始める
+  // 展開の上限（50MB）を超える zip を、機械が速くても取り込みが重なるように、多めに続けて取り込む
   const bomb = zipFile('bomb.zip', { 'tour.yaml': tourYaml(validTour(server.origin)), 'filler.bin': new Uint8Array(60 * MB) });
-  await panel.importFiles([bomb, bomb, bomb]);
+  const bombs = Array.from({ length: BOMB_COUNT }, (_, i) => ({ ...bomb, name: `bomb-${String(i + 1)}.zip` }));
+  await panel.importFiles(bombs);
+  const importing = panel.page.getByRole('status').filter({ hasText: '取り込み中です' });
+  await expect(importing).toBeVisible();
   await beginTour(panel, tour.name, tab);
   const started = Date.now();
+  // 一時中断と終了を、取り込みの最中に続けて行う（間に時間のかかる手順を挟まない）
   await panel.pause();
   await expect(panel.page.locator('.screen-paused')).toBeVisible();
   await expectNoOwnUi(ownUi(tab), 300);
-  await panel.resumePaused();
-  await expect(panel.page.locator('.screen-running')).toBeVisible();
   await panel.stop();
   await expect(panel.page.getByRole('status').filter({ hasText: 'ツアーを終了しました' })).toBeVisible();
+  // 終了すると一覧に戻る。まだ取り込み中なので、一時中断と終了の両方が取り込みの完了より前に受け付けられた
+  await expect(importing).toBeVisible();
   // 取り込みで固まらず、操作がすぐに受け付けられた
   expect(Date.now() - started).toBeLessThan(20_000);
   expect((await ext.storageSession('tour')) !== undefined).toBe(true);
+
+  // 取り込みが終わると、すべての拒否の理由が一覧に表示される（画面が変わっても失われない）
+  const failed = panel.importResults().locator('.result-error');
+  await expect(failed).toHaveCount(BOMB_COUNT, { timeout: 120_000 });
+  for (let i = 0; i < BOMB_COUNT; i++) {
+    const text = (await failed.nth(i).innerText()).replaceAll(/\s+/g, ' ');
+    expect(text).toContain(`bomb-${String(i + 1)}.zip`);
+    expect(text).toMatch(/上限/);
+  }
+  await expect(importing).toHaveCount(0);
 });
 
 /** URL 条件に `path` を持つツアーを取り込もうとして、拒否の理由を返す。 */

@@ -18,7 +18,8 @@
  * - `panel.useTab(pattern?)` / `openHere()` / `openNew()` / `focusRole()` / `recheck()`: タブの操作。`useTab` は「〜として使う」の先頭（`pattern` で選べる）。
  *   既存タブの一覧は、役割のタブが無い間はタブの作成・移動・閉鎖で自動で更新される。`recheck()`（再確認）で取り直すこともできる。
  * - `panel.heading()` / `panel.stepBadge()` / `panel.hintText()` / `panel.notice()`: 画面の文言の読み取り。
- * - `panel.openSettings()` / `panel.setMiniGuideHidden(bool)` / `panel.backToList()`: 設定。
+ * - `panel.openSettings()` / `panel.setMiniGuideHidden(bool)` / `panel.backToList()`: 設定。`openSettings` は一覧・実行中・一時中断中のどの画面からでも押せる。
+ * - `panel.openList()` / `panel.backToTour()`: 実行中・一時中断中の画面から、ツアーの一覧（取り込み・削除・再読み込み。開始のボタンは出ない）へ移る・戻る。
  * - `panel.confirm()` / `panel.cancel()`: 確認の画面（上書き・付け替え・削除・消去）。
  */
 import { expect } from '@playwright/test';
@@ -57,6 +58,8 @@ export interface SidePanel {
   openSettings(): Promise<void>;
   setMiniGuideHidden(hidden: boolean): Promise<void>;
   backToList(): Promise<void>;
+  openList(): Promise<void>;
+  backToTour(): Promise<void>;
   confirm(): Promise<void>;
   cancel(): Promise<void>;
   close(): Promise<void>;
@@ -165,6 +168,8 @@ export async function openPanel(ext: Extension): Promise<SidePanel> {
       await expect(box).toBeChecked({ checked: hidden });
     },
     backToList: () => click('一覧へ戻る'),
+    openList: () => click('ツアーの一覧'),
+    backToTour: () => click(/^(実行中|一時中断中)の画面へ戻る$/),
     async confirm() {
       await press(page.getByRole('alertdialog').locator('button.danger'));
     },

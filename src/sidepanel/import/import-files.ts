@@ -106,6 +106,8 @@ async function importOne(file: File, deps: ImportDeps, seenIds: Set<string>): Pr
   const bundled = (await deps.getBundledTourIds()).includes(tour.id);
   if (imported || bundled) {
     const approved = await deps.confirmOverwrite({
+      fileName,
+      tourName: tour.name,
       tourId: tour.id,
       existingSource: imported ? 'imported' : 'bundled',
       running: (await deps.getRunningTourId()) === tour.id,

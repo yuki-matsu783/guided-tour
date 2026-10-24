@@ -1075,7 +1075,8 @@ export function createSession(deps: SessionDeps): Session {
   function handlePanel(msg: { readonly type: 'GET_STATE' }): Promise<PanelView>;
   function handlePanel(msg: PanelToBg): Promise<PanelResponse>;
   function handlePanel(msg: PanelToBg): Promise<PanelResponse> {
-    if (msg.type === 'GET_STATE') return currentView();
+    // 状態の写しも確定の順に作る（新しい通知より古い写しを返さない）
+    if (msg.type === 'GET_STATE') return enqueue(currentView);
     return panelOps(msg);
   }
 

@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { test, expect, ownUi } from './support/fixtures.ts';
 import { routeExampleCom } from './support/example-com.ts';
 import { expectMiniGuideStep, expectNoOwnUi, expectPanelStep, hasProgress, sleep, tabCount } from './support/flows.ts';
+import type { OwnUi } from './support/own-ui.ts';
 import type { SidePanel } from './support/panel.ts';
 
 const TOUR_NAME = 'Guided Setup Tour の使い方';
@@ -142,6 +143,21 @@ async function expectPageStep(panel: SidePanel, page: Page, stepNo: number): Pro
   }
 }
 
+/**
+ * ページ上の枠が、取った矩形（要素の位置と大きさ）を囲んでいること。
+ * 枠は、ミニガイドの左までの範囲に収まる（製品の仕様）ので、ミニガイドに隠れる右側は、ミニガイドの左端までを囲めばよい。
+ */
+async function expectFrameAround(ui: OwnUi, target: { x: number; y: number; width: number; height: number } | null): Promise<void> {
+  expect(target).not.toBeNull();
+  const frame = (await ui.overlay())?.frame;
+  if (target === null || frame === null || frame === undefined) throw new Error('対象の矩形か枠が無い');
+  const miniGuideLeft = (await ui.miniGuide())?.rect.x ?? Infinity;
+  expect(frame.x).toBeLessThanOrEqual(target.x);
+  expect(frame.y).toBeLessThanOrEqual(target.y);
+  expect(frame.x + frame.width).toBeGreaterThanOrEqual(Math.min(target.x + target.width, miniGuideLeft));
+  expect(frame.y + frame.height).toBeGreaterThanOrEqual(target.y + target.height);
+}
+
 test('E-85: 自己紹介ツアーを最初から最後まで「次へ」で進め、「完了」で完了が表示されて進捗が破棄される', async ({
   ext,
   server,
@@ -171,7 +187,7 @@ test('E-85: 自己紹介ツアーを最初から最後まで「次へ」で進�
   await expectPageStep(panel, current, 4);
   await expect.poll(async () => (await ui.overlay())?.frame ?? null).not.toBeNull();
   const heading = await current.getByRole('heading', { name: 'Example Domain' }).boundingBox();
-  expect(heading).not.toBeNull();
+  await expectFrameAround(ui, heading);
   await panel.next();
 
   // 5・6: リンクがハイライトされ、6 では目安が満たされる
@@ -241,14 +257,7 @@ test('E-86: リンクの名前が旧表記でも、名前の候補でリンク�
   await expectPanelStep(panel, `5/${String(STEP_COUNT)}`);
   await expect.poll(async () => (await ui.overlay())?.frame ?? null).not.toBeNull();
   const link = await current.getByRole('link', { name: 'More information...' }).boundingBox();
-  const frame = (await ui.overlay())?.frame;
-  expect(link).not.toBeNull();
-  if (link === null || frame === null || frame === undefined) throw new Error('リンクか枠が無い');
-  // 枠はリンクを囲む
-  expect(frame.x).toBeLessThanOrEqual(link.x);
-  expect(frame.y).toBeLessThanOrEqual(link.y);
-  expect(frame.x + frame.width).toBeGreaterThanOrEqual(link.x + link.width);
-  expect(frame.y + frame.height).toBeGreaterThanOrEqual(link.y + link.height);
+  await expectFrameAround(ui, link);
   // 次の手順（6）でも同じ。目安（リンクの出現）が満たされる
   await panel.next();
   await expectPanelStep(panel, `6/${String(STEP_COUNT)}`);

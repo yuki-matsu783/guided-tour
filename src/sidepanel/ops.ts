@@ -23,6 +23,7 @@ import { createMoveGate } from '../shared/move-gate/index.ts';
 import { describeResponse, permissionMissingText } from './response-text.ts';
 
 export interface OpsHost {
+  /** `now` は移動の受け付けの待ちに使う、巻き戻らない時計。 */
   deps: Pick<PanelDeps, 'send' | 'permissions' | 'logger' | 'now'>;
   getView(): PanelView | null;
   /** 画面に出す結果の文言。null で消す。 */

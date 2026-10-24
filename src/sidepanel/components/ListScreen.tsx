@@ -1,23 +1,31 @@
 /**
  * 一覧の画面。ツアーごとに、出所・許可・要確認・ステップ数・対象サイトを示し、
  * 開始（進捗があれば「続きから」と「最初から」）と削除（取り込みのみ）を置く。取り込みエリア・再読み込み・設定への入口もここにある。
+ * 実行中・一時中断中に開いたときは、開始のボタンを出さず、元の画面へ戻る入口を出す（取り込み・削除・再読み込み・設定は使える）。
  */
 import type { ReactNode } from 'react';
 import type { CatalogEntry } from '../../shared/messages/index.ts';
 import { usePanel } from '../context.ts';
 import { SOURCE_LABEL, formatDateTime } from '../format.ts';
-import type { OverwriteRequest } from '../import/index.ts';
+import type { Importer } from '../use-importer.ts';
 import { ImportArea } from './ImportArea.tsx';
 
 /** 完了・終了のあとに一覧の先頭へ出す知らせ。 */
 export type Flash = { kind: 'completed'; tourName: string | null } | { kind: 'stopped' };
 
+/** 実行中・一時中断中の画面から開いたときの戻り先の表示名。 */
+export const BACK_LABEL = {
+  running: '実行中の画面へ戻る',
+  paused: '一時中断中の画面へ戻る',
+} as const;
+
 interface ListScreenProps {
   flash: Flash | null;
+  importer: Importer;
   onOpenSettings: () => void;
   onRemove: (entry: CatalogEntry) => void;
-  confirmOverwrite: (request: OverwriteRequest) => Promise<boolean>;
-  getRunningTourId: () => string | null;
+  /** 実行中・一時中断中の画面から開いたとき、元の画面へ戻る。それ以外は null。 */
+  onBack: (() => void) | null;
 }
 
 function progressText(entry: CatalogEntry): string | null {
@@ -26,7 +34,15 @@ function progressText(entry: CatalogEntry): string | null {
   return `${String(p.stepIndex + 1)}/${String(entry.stepCount)} ステップまで進みました（保存: ${formatDateTime(p.savedAt)}）`;
 }
 
-function TourCard({ entry, onRemove }: { entry: CatalogEntry; onRemove: (e: CatalogEntry) => void }): ReactNode {
+function TourCard({
+  entry,
+  canStart,
+  onRemove,
+}: {
+  entry: CatalogEntry;
+  canStart: boolean;
+  onRemove: (e: CatalogEntry) => void;
+}): ReactNode {
   const { ops } = usePanel();
   const progress = progressText(entry);
   return (
@@ -52,7 +68,7 @@ function TourCard({ entry, onRemove }: { entry: CatalogEntry; onRemove: (e: Cata
       </dl>
       {progress !== null && <p className="meta">{progress}</p>}
       <div className="actions">
-        {entry.progress !== null && (
+        {canStart && entry.progress !== null && (
           <button
             type="button"
             className="primary"
@@ -64,16 +80,18 @@ function TourCard({ entry, onRemove }: { entry: CatalogEntry; onRemove: (e: Cata
             続きから
           </button>
         )}
-        <button
-          type="button"
-          className={entry.progress === null ? 'primary' : undefined}
-          data-focus-id={`start-${entry.id}`}
-          onClick={() => {
-            ops.start(entry, false);
-          }}
-        >
-          最初から
-        </button>
+        {canStart && (
+          <button
+            type="button"
+            className={entry.progress === null ? 'primary' : undefined}
+            data-focus-id={`start-${entry.id}`}
+            onClick={() => {
+              ops.start(entry, false);
+            }}
+          >
+            最初から
+          </button>
+        )}
         {entry.source === 'imported' && (
           <button
             type="button"
@@ -92,8 +110,9 @@ function TourCard({ entry, onRemove }: { entry: CatalogEntry; onRemove: (e: Cata
 }
 
 export function ListScreen(props: ListScreenProps): ReactNode {
-  const { flash, onOpenSettings, onRemove, confirmOverwrite, getRunningTourId } = props;
-  const { deps, view, ops, refresh } = usePanel();
+  const { flash, importer, onOpenSettings, onRemove, onBack } = props;
+  const { view, ops } = usePanel();
+  const canStart = view.status !== 'running' && view.status !== 'paused';
 
   return (
     <div className="screen screen-list">
@@ -102,6 +121,11 @@ export function ListScreen(props: ListScreenProps): ReactNode {
           ツアー一覧
         </h1>
         <div className="header-actions">
+          {onBack !== null && (
+            <button type="button" className="primary" data-focus-id="back-to-tour" onClick={onBack}>
+              {view.status === 'paused' ? BACK_LABEL.paused : BACK_LABEL.running}
+            </button>
+          )}
           <button type="button" data-focus-id="reload" onClick={ops.reload}>
             再読み込み
           </button>
@@ -131,17 +155,11 @@ export function ListScreen(props: ListScreenProps): ReactNode {
       ) : (
         <ul className="tour-list" aria-label="ツアーの一覧">
           {view.catalog.map((entry) => (
-            <TourCard key={entry.id} entry={entry} onRemove={onRemove} />
+            <TourCard key={entry.id} entry={entry} canStart={canStart} onRemove={onRemove} />
           ))}
         </ul>
       )}
-      <ImportArea
-        deps={deps}
-        catalog={view.catalog}
-        confirmOverwrite={confirmOverwrite}
-        getRunningTourId={getRunningTourId}
-        onImported={refresh}
-      />
+      <ImportArea importer={importer} />
     </div>
   );
 }

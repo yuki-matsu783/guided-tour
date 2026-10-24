@@ -607,6 +607,28 @@ describe('移動の直後の操作の受け付け', () => {
   });
 });
 
+describe('移動の受け付けの既定の時計', () => {
+  it('R-PANEL-84: 時計を渡さないときは performance.now を使い、Date.now の巻き戻しに影響されない', () => {
+    const date = vi.spyOn(Date, 'now');
+    const perf = vi.spyOn(performance, 'now');
+    date.mockReturnValue(1_000_000);
+    perf.mockReturnValue(100);
+    const s = setup(true);
+    s.mg.renderMiniGuide(MODEL, UI);
+    click(buttonByText(s, '次へ'));
+    s.mg.renderMiniGuide({ ...MODEL, gen: gen(5) }, UI);
+    // 壁時計が大きく戻っても、経過時間は performance.now で測る
+    date.mockReturnValue(0);
+    perf.mockReturnValue(100 + MOVE_ACCEPT_DELAY_MS - 1);
+    click(buttonByText(s, '次へ'));
+    expect(s.sent.filter((m) => m.type === 'GOTO')).toHaveLength(1);
+    perf.mockReturnValue(100 + MOVE_ACCEPT_DELAY_MS);
+    date.mockReturnValue(-5_000_000);
+    click(buttonByText(s, '次へ'));
+    expect(s.sent.filter((m) => m.type === 'GOTO')).toHaveLength(2);
+  });
+});
+
 describe('受け付けられなかった移動', () => {
   const moves = (s: Setup): PageToBg[] => s.sent.filter((m) => m.type === 'GOTO');
   const settle = async (): Promise<void> => {

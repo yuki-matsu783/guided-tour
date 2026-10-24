@@ -1,13 +1,15 @@
 /**
  * サイドパネルの最上位。状態の写し（`PanelView`）の状態に応じて、一覧・実行中・一時中断中・設定のどれかを出す。
+ * 実行中・一時中断中の画面からは、一覧（取り込み・削除。開始は出さない）と設定へ移れる。
  * 確認の画面（上書き・付け替え・削除・消去）はここで持ち、出している間は背後を操作できなくする（inert）。
+ * 上書きの確認は取り込みごとに列になり、1つずつ出す。取り込みの進行と結果もここ（`useImporter`）で持つ。
  * 写しがまだ無い間は、応答待ちの表示だけを出す。
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { CatalogEntry, PanelView } from '../shared/messages/index.ts';
 import { createAssets } from './assets/index.ts';
-import { ListScreen } from './components/ListScreen.tsx';
+import { BACK_LABEL, ListScreen } from './components/ListScreen.tsx';
 import type { Flash } from './components/ListScreen.tsx';
 import { PausedScreen } from './components/PausedScreen.tsx';
 import { RunningScreen } from './components/RunningScreen.tsx';
@@ -19,22 +21,35 @@ import { ConfirmDialog, useFocusRestore } from './focus.tsx';
 import type { OverwriteRequest } from './import/index.ts';
 import { createOps } from './ops.ts';
 import { roleLabelOf } from './role-label.ts';
+import { useImporter } from './use-importer.ts';
 import { usePanelView } from './use-panel-view.ts';
 
 type DialogState =
-  | { kind: 'overwrite'; request: OverwriteRequest; resolve: (ok: boolean) => void }
   | { kind: 'bind'; tabId: number; boundRole: string }
   | { kind: 'remove'; entry: CatalogEntry }
   | { kind: 'clear'; proceed: () => void };
 
-function OverwriteDialogBody({ request }: { request: OverwriteRequest }): ReactNode {
+/** 表示する画面。`list` は、実行中・一時中断中の画面から開いた一覧。設定は開いた元（`from`）へ戻る。 */
+type Screen = { kind: 'main' } | { kind: 'list' } | { kind: 'settings'; from: 'main' | 'list' };
+
+function OverwriteDialogBody({
+  request,
+  running,
+  waiting,
+}: {
+  request: OverwriteRequest;
+  /** 確認を出している間に実行が始まったときも示すため、確認の要求の時点の値とは別に受け取る。 */
+  running: boolean;
+  waiting: number;
+}): ReactNode {
   return (
     <>
-      <p>{`ID「${request.tourId}」のツアーがすでにあります。取り込んだもので上書きしますか。`}</p>
+      <p>{`ファイル「${request.fileName}」のツアー「${request.tourName}」（ID「${request.tourId}」）は、同じ ID のツアーがすでにあります。取り込んだもので上書きしますか。`}</p>
       {request.existingSource === 'bundled' && (
         <p>同梱されたツアーを、取り込んだもので置き換えます。取り込んだものを削除すると、同梱版が再び使われます。</p>
       )}
-      {request.running && <p>このツアーは実行中です。上書きすると、一時中断になります。</p>}
+      {running && <p>このツアーは実行中です。上書きすると、一時中断になります。</p>}
+      {waiting > 0 && <p className="meta">{`このあと、${String(waiting)} 件の上書きの確認があります。`}</p>}
     </>
   );
 }
@@ -59,7 +74,7 @@ export function App({ deps }: { deps: PanelDeps }): ReactNode {
   const [notice, setNotice] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
-  const [screen, setScreen] = useState<'main' | 'settings'>('main');
+  const [screen, setScreen] = useState<Screen>({ kind: 'main' });
   const { onClickCapture, rootRef } = useFocusRestore();
 
   // 非同期の処理から最新の写しを読むための入れ物。子の effect より先に更新する
@@ -125,33 +140,41 @@ export function App({ deps }: { deps: PanelDeps }): ReactNode {
     ops.shown(viewGen);
   }, [ops, viewGen]);
 
-  const confirmOverwrite = useCallback(
-    (request: OverwriteRequest) =>
-      new Promise<boolean>((resolve) => {
-        setDialog({ kind: 'overwrite', request, resolve });
-      }),
-    [],
-  );
-  const getRunningTourId = useCallback((): string | null => {
-    const current = holder.get();
-    return current?.status === 'running' ? (current.tour?.id ?? null) : null;
-  }, [holder]);
+  const importer = useImporter({ deps, getView: holder.get, refresh });
+
+  // 実行の状態が変わったら（一時中断になった、終了したなど）、開いていた一覧を閉じて、その状態の画面を出す
+  const status = view?.status ?? null;
+  const [seenStatus, setSeenStatus] = useState(status);
+  if (seenStatus !== status) {
+    setSeenStatus(status);
+    setScreen((current) => (current.kind === 'list' ? { kind: 'main' } : current));
+  }
 
   const value = useMemo<PanelContextValue | null>(
     () => (view === null ? null : { deps, view, ops, assets, refresh }),
     [deps, view, ops, assets, refresh],
   );
 
+  const tourOngoing = view?.status === 'running' || view?.status === 'paused';
+
   const closeDialog = (): void => {
     setDialog(null);
   };
 
   const renderScreen = (current: PanelView): ReactNode => {
-    if (screen === 'settings') {
+    const active = current.status === 'running' || current.status === 'paused';
+    const mainLabel = current.status === 'running' ? BACK_LABEL.running : current.status === 'paused' ? BACK_LABEL.paused : '一覧へ戻る';
+    const openSettings = (): void => {
+      setFlash(null);
+      setScreen({ kind: 'settings', from: screen.kind === 'list' ? 'list' : 'main' });
+    };
+    if (screen.kind === 'settings') {
+      const from = screen.from;
       return (
         <SettingsScreen
+          backLabel={from === 'list' ? '一覧へ戻る' : mainLabel}
           onBack={() => {
-            setScreen('main');
+            setScreen({ kind: from });
           }}
           confirmClear={(proceed) => {
             setDialog({ kind: 'clear', proceed });
@@ -159,27 +182,37 @@ export function App({ deps }: { deps: PanelDeps }): ReactNode {
         />
       );
     }
-    if (current.status === 'running') return <RunningScreen />;
-    if (current.status === 'paused') return <PausedScreen />;
+    const nav = {
+      onOpenList: () => {
+        setScreen({ kind: 'list' });
+      },
+      onOpenSettings: openSettings,
+    };
+    if (active && screen.kind !== 'list') {
+      return current.status === 'running' ? <RunningScreen {...nav} /> : <PausedScreen {...nav} />;
+    }
     return (
       <ListScreen
         flash={flash}
-        onOpenSettings={() => {
-          setFlash(null);
-          setScreen('settings');
-        }}
+        importer={importer}
+        onOpenSettings={openSettings}
         onRemove={(entry) => {
           setDialog({ kind: 'remove', entry });
         }}
-        confirmOverwrite={confirmOverwrite}
-        getRunningTourId={getRunningTourId}
+        onBack={
+          active
+            ? () => {
+                setScreen({ kind: 'main' });
+              }
+            : null
+        }
       />
     );
   };
 
   return (
     <div className="app" ref={rootRef} onClickCapture={onClickCapture}>
-      <div className="app-main" inert={dialog !== null}>
+      <div className="app-main" inert={dialog !== null || importer.pending !== null}>
         {notice !== null && (
           <div className="notice notice-error banner" role="alert">
             <span>{notice}</span>
@@ -201,21 +234,24 @@ export function App({ deps }: { deps: PanelDeps }): ReactNode {
           <PanelContext.Provider value={value}>{renderScreen(view)}</PanelContext.Provider>
         )}
       </div>
-      {dialog?.kind === 'overwrite' && (
+      {dialog === null && importer.pending !== null && (
         <ConfirmDialog
+          key={`${importer.pending.fileName}\n${importer.pending.tourId}`}
           title="上書きの確認"
           confirmLabel="上書きする"
           cancelLabel="上書きしない"
           onConfirm={() => {
-            closeDialog();
-            dialog.resolve(true);
+            importer.answer(true);
           }}
           onCancel={() => {
-            closeDialog();
-            dialog.resolve(false);
+            importer.answer(false);
           }}
         >
-          <OverwriteDialogBody request={dialog.request} />
+          <OverwriteDialogBody
+            request={importer.pending}
+            running={importer.pending.running || (view?.status === 'running' && view.tour?.id === importer.pending.tourId)}
+            waiting={importer.waiting}
+          />
         </ConfirmDialog>
       )}
       {dialog?.kind === 'bind' && (
@@ -244,6 +280,13 @@ export function App({ deps }: { deps: PanelDeps }): ReactNode {
           onCancel={closeDialog}
         >
           <p>{`「${dialog.entry.name}」を削除します。同じ ID の同梱版があれば、再びそちらが使われます。`}</p>
+          {tourOngoing && view.tour?.id === dialog.entry.id && (
+            <p>
+              {view.status === 'running'
+                ? 'このツアーは実行中です。削除すると、ツアーは終了し、進捗も消えます。'
+                : 'このツアーは一時中断中です。削除すると、ツアーは終了し、進捗も消えます。'}
+            </p>
+          )}
         </ConfirmDialog>
       )}
       {dialog?.kind === 'clear' && (

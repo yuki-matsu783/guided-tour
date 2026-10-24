@@ -283,7 +283,7 @@ describe('取り込み', () => {
     const deps = makeDeps(makeView({ catalog: [entry({ id: 'a', source: 'bundled' })] }));
     const answers: boolean[] = [];
     deps.importFiles = async (_files, hooks) => {
-      answers.push(await hooks.confirmOverwrite({ tourId: 'a', existingSource: 'bundled', running: true }));
+      answers.push(await hooks.confirmOverwrite({ fileName: 'a.yaml', tourName: '新しい a', tourId: 'a', existingSource: 'bundled', running: true }));
       return [];
     };
     const { container } = await mount(<App deps={deps} />);

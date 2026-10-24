@@ -481,6 +481,19 @@ describe('確定と保存の順序', () => {
     expect(env.state()).toMatchObject({ stepIndex: 1, gen: 2, overlayHidden: false });
   });
 
+  it('R-PANEL-72: GET_STATE も直列化キューを通り、先に受け付けた操作の確定のあとの写しを返す', async () => {
+    const env = await running();
+    env.sessionArea.delay = true;
+    env.localArea.delay = true;
+    const { sessionId, gen } = cur(env);
+    const [moved, view] = await Promise.all([
+      env.session.handlePanel({ type: 'GOTO', to: 1, sessionId, gen, opId: freshOp() }),
+      env.session.handlePanel({ type: 'GET_STATE' }),
+    ]);
+    expect(moved.status).toBe('done');
+    expect(view.stepIndex).toBe(1);
+  });
+
   it('T-SES-34: キューの中で、YAML・zip・画像の解析のような重い処理が行われない', () => {
     const dir = new URL('.', import.meta.url);
     const files = readdirSync(dir).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts') && f !== 'testkit.ts');
