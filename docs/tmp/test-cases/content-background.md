@@ -160,7 +160,7 @@ keywords: [単体テスト, Vitest, ステップ実行器, ミニガイド, 状�
 | T-OVL-19 | ミニガイドが有効なとき、表示を戻すボタンはページ上に出ない | FR-95 |
 | T-OVL-20 | 表示を戻すボタンを（`isTrusted` が真で）押したとき、`SET_OVERLAY{hidden: false}` が送られる | FR-95 |
 | T-OVL-21 | `isTrusted` が偽のクリックでは、表示を戻すボタンは何も送らない | NFR-16 |
-| T-OVL-22 | 案内だけの手順・不一致・完了ページ（ハイライトなし）では、表示を戻すボタンを含めページ上に何も出ない | FR-45、FR-95、AC-20 |
+| T-OVL-22 | 案内だけの手順・不一致では、表示を戻すボタンを含めページ上に何も出ない。「ミニガイドを表示しない」設定で表示を消しているとき、URL 条件に合うページと完了ページでは、対象を特定できたかに関わらず表示を戻すボタンが出る | FR-45、FR-95、AC-19、AC-20 |
 | T-OVL-23 | `clear()` を呼んだとき、枠・減衰板・吹き出し・ボタンがすべて取り除かれる | components-content overlay |
 | T-OVL-24 | すべてのボタンが `<button>` で作られ、キーボード（Enter・Space）で操作できる | components-content overlay、NFR-01〜05 |
 | T-OVL-25 | キーボードのフォーカスが見える（フォーカス表示の指定がある） | components-content overlay |
@@ -312,6 +312,7 @@ keywords: [単体テスト, Vitest, ステップ実行器, ミニガイド, 状�
 | T-SES-63 | `CATALOG_CHANGED` で、実行中でないツアーの ID のとき、何も起きない | components-background ツアーの改訂 |
 | T-SES-64 | `CATALOG_CHANGED` で、実行中のツアーが削除されていたとき、終了（`ended`）が確定され、進捗が削除される | FR-36、AC-64 |
 | T-SES-65 | 実行中のツアーの削除で、全タブに `CLEAR` が送られ、表示とミニガイドが消える | FR-36、AC-64 |
+| T-SES-65a | 実行中の取り込み版が削除され、同じ ID の同梱版が残っているとき、上書きの一時中断にはならず、終了（`ended`）が確定され、進捗が削除される。一時中断中に削除されたときも同じ | FR-36、FR-06、設計：ツアーの改訂 |
 | T-SES-66 | 上書きによる一時中断の間、実行中のツアーは固定した `hash` のままで、勝手に新版へ切り替わらない | FR-34、AC-62 |
 | T-SES-67 | `RESUME_NEW{mode: continue}` で、同じ stepId のステップから、新しい `sessionId`・新しい `hash` で再開される | FR-35、FR-63、AC-63、data-flow ③ |
 | T-SES-68 | `RESUME_NEW{mode: continue}` で、同じ stepId が新版にないとき、最初のステップから再開される | FR-35、AC-63 |

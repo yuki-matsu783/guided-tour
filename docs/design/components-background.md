@@ -25,7 +25,7 @@ keywords: [Service Worker, session, tabs, catalog, permissions]
   | `setOverlay(hidden)` / `setUi(mode, width)` | ページ上の表示の切り替え、ミニガイドの設定の保存と全タブへの反映 |
   | `recheck()` / `scrollToTarget()` | 再確認・対象を表示 |
 
-- ツアーの改訂：`CATALOG_CHANGED{tourId, hash}` を受け、実行中のツアーの ID が同じで `hash` が違えば、一時中断（理由：上書き）にする。削除されていたら終了する。
+- ツアーの改訂：`CATALOG_CHANGED{tourId, hash}` を受け、実行中のツアーの ID が同じで `hash` が違えば、一時中断（理由：上書き）にする。削除されていたら、同じ ID の同梱版が残っていても終了する。
 - 保存の失敗：`saveError` を立てて操作を続ける。次に保存に成功したら下ろす。
 - 頼るもの：タブ管理、ツアー管理、権限、storage
 
