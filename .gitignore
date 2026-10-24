@@ -1,0 +1,5 @@
+*.pem
+dist/
+release/
+node_modules/
+test-results/

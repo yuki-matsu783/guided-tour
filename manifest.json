@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Guided Setup Tour",
+  "version": "0.1.0",
+  "minimum_chrome_version": "114",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuMVPRpxVgESFvNru9lAVqoGwBJUvOoxtRcthg4myyOCIFAQi8N8vtXKIH7gIgjDzIpgY5nMwHqJT8KluBlgbPOncfIyPfJKLdI/M8PCyhEUIgcdrff7ICzKVef6fOCBMAzTyWwhrYm/reD67qAMCvgOIGsHx3GANOI4gbTw8QHflDd+QeE5PjO0WYZaZO/rxAMXHKevFs4RNN0M8w57Rny+KxMxXS3p4NxWRb6Js40z6TYseNDIP7sC0teSSj50X7CVzyXlkc9x+D2wb5K+6/k2TygdO9juyvjfbrqIjVg1kZL1zwFKJzr+T5XtxkdxpNKqYdQA5sN3wz5ARfY/IrQIDAQAB",
+  "background": { "service_worker": "background.js" },
+  "permissions": ["storage", "unlimitedStorage", "scripting", "tabs", "webNavigation", "sidePanel"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "side_panel": { "default_path": "sidepanel.html" },
+  "action": { "default_title": "Guided Setup Tour" },
+  "commands": {
+    "_execute_action": { "suggested_key": { "default": "Alt+Shift+G" } }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; img-src 'self' data: blob:; frame-src 'none'"
+  }
+}
