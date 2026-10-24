@@ -42,7 +42,7 @@ keywords: [sidepanel, logger, diagnostics, markdown]
   | 種類 | 許可するもの |
   |---|---|
   | 要素 | p、h1〜h4（1段下げて表示する）、strong、em、code、pre、ul、ol、li、blockquote、hr、br、table、thead、tbody、tr、th、td、a、img |
-  | 属性 | a の href、img の src と alt、th と td の揃え（クラスで表す） |
+  | 属性 | a の href、img の src と alt、ol の start（開始番号）、th と td の揃え（クラスで表す） |
   | URL の方式 | リンクは http / https だけ。画像は、画像の URL 管理で解決した拡張機能内の URL・blob URL・許可された data URL だけ |
 
   許可リストにないものは文字列として表示する。リンクは `target="_blank" rel="noopener noreferrer"` で出し、文字の後ろにホスト名を添え、`origins` 外なら「宣言外のサイト」と示す。画像を表示できない場合は代替文を表示する。
@@ -53,6 +53,7 @@ keywords: [sidepanel, logger, diagnostics, markdown]
 
 - 役割：一覧・実行中・一時中断中・設定の4画面。
 - 使い方：`GET_STATE` で状態の写しを取得して描画する。`TOUR_STATE_CHANGED` を受けたら、120ミリ秒に間引いて描き直す。操作には、表示中の `sessionId`・`gen` と新しい `opId` を付ける。
+- 移動の操作の受け付け：ミニガイドと同じ規則で、移動を送ったら新しい表示が届くまで次の移動を送らず、表示が届いてから一定時間（値は時間の表）も受け付けない。
 - 一時中断中の画面：理由（`user`・`permission`・`overwritten`）に応じた選択肢を出す。`overwritten` で新版の `origins` が増えている場合は、「新版で続きから／最初から」を押した操作の中で権限を要求してから、`RESUME_NEW` を送る。
 - 保存の状態：`saveError` が立っている間は、実行中の画面に「保存されていません。再起動すると前の位置に戻る可能性があります」を出し続ける。
 - 設定画面：ログレベル、ミニガイドを表示するか、保守記録とログの確認・書き出し・消去。

@@ -11,28 +11,31 @@ keywords: [Service Worker, session, tabs, catalog, permissions]
 ## 状態管理（background/session）
 
 - 役割：実行中の状態を持ち、操作を直列化キューで、「状態の確定と保存の順序」に従って処理する。
-- 使い方：
+- 使い方：サイドパネルとページ側からの操作を受け、操作ごとに状態を更新して、結果を返す。コードは `src/background/session/`。タブ管理・ツアー管理との約束の型は `src/background/ports.ts`。
 
   | 操作 | 内容 |
   |---|---|
-  | `start(tourId, resume)` | バージョン・権限を確認し、ツアーの `hash` を固定して、新しい `sessionId` で状態を作る |
-  | `goto(to)` | 受け付けたら、`gen` を1増やす。最終ステップの次は完了とする |
-  | `pause()` / `resume()` / `stop()` / `restart()` | 一時中断・再開（`gen` を増やす）・終了・最初からやり直し（新しい `sessionId`） |
-  | `resumeNew(mode)` | 上書きによる一時中断から、新版で再開する（`continue`：同じ stepId から、無ければ最初から／`restart`：最初から）。新しい `sessionId` を作る |
-  | `bindTab(tabId, force)` | 既存のタブを役割に対応付ける。別の役割に対応付けられていて `force` がなければ、確認が必要と返す |
-  | `openInTab(mode)` | 今のタブ／新しいタブで開き、役割に対応付ける |
-  | `focusRole()` | 役割のタブとそのウィンドウを前面に出す |
-  | `setOverlay(hidden)` / `setUi(mode, width)` | ページ上の表示の切り替え、ミニガイドの設定の保存と全タブへの反映 |
-  | `recheck()` / `scrollToTarget()` | 再確認・対象を表示 |
+  | 開始 | バージョン・権限を確認し、ツアーの `hash` を固定して、新しい `sessionId` で状態を作る |
+  | 移動 | 受け付けたら、`gen` を1増やす。最終ステップの次は完了とする |
+  | 一時中断・再開・終了・最初からやり直し | 再開は `gen` を増やす。最初からやり直しは新しい `sessionId` を作る |
+  | 新版での再開 | 上書きによる一時中断から、新版で再開する（「続きから」は同じ stepId から、無ければ最初から。「最初から」は最初から）。新しい `sessionId` を作る |
+  | タブの対応付け | 既存のタブを役割に対応付ける。別の役割に対応付けられていて強制の指定がなければ、確認が必要と返す |
+  | タブで開く | 今のタブ／新しいタブで開き、役割に対応付ける |
+  | 役割のタブを前面に出す | 役割のタブとそのウィンドウを前面に出す |
+  | 表示の設定 | ページ上の表示の切り替え、ミニガイドの設定の保存と全タブへの反映 |
+  | 再確認・対象を表示 | 現在のステップを探し直す、対象までスクロールする |
 
-- ツアーの改訂：`CATALOG_CHANGED{tourId, hash}` を受け、実行中のツアーの ID が同じで `hash` が違えば、一時中断（理由：上書き）にする。削除されていたら終了する。
+- ツアーの改訂：`CATALOG_CHANGED{tourId, hash}` を受け、実行中のツアーの ID が同じで `hash` が違えば、一時中断（理由：上書き）にする。削除されていたら、同じ ID の同梱版が残っていても終了する。上書きかどうかは、通知の `hash` ではなく、ツアー管理の現在の版と固定した版を比べて決める。
+- 起動時の復帰での版の照合：通知が届かないまま Service Worker が再起動しても、復帰の中で実行中・一時中断中のツアーの固定した版を現在の版と照合する。版が違う、または固定した版が取れないときは、上書きによる一時中断にする。現在の版も無ければ、削除として終了する。
+- 削除（`REMOVE`）：実行中のツアーは終了し（進捗も消える）、実行していないツアーでも、そのツアーの進捗を消す。消せなかったら削除待ちに入れる（進捗の保存期間は「ツアーの削除まで」）。
+- 許可の取り消し：Service Worker が眠っている間に取り消されても、起こされたあとに状態を storage から読み込んでから、実行中のツアーの許可を確かめ、失われていれば一時中断（理由：許可の取り消し）にする。
 - 保存の失敗：`saveError` を立てて操作を続ける。次に保存に成功したら下ろす。
 - 頼るもの：タブ管理、ツアー管理、権限、storage
 
 ## タブ管理（background/tabs）
 
 - 役割：役割とタブの対応付けを管理し、ステップごとのタブの状態を判定する。依頼されたときだけ、開く・対応付ける・前面に出す。
-- 使い方：`evaluate(state, step)` → `{ status, selected, attended, candidates[] }`。`candidates` は、URL 条件に合う既存のタブ（全ウィンドウ。別の役割に対応付け済みのものには印を付ける）。
+- 使い方：状態とステップを渡すと、役割のタブの状態（見つかったか、選択中か、注目中か）と、対応付けの候補を返す。候補は、URL 条件に合う既存のタブ（全ウィンドウ。別の役割に対応付け済みのものには印を付ける）。コードは `src/background/tabs/`。状態管理との約束の型は `src/background/ports.ts`。
 - 選択中・注目中：`selected` はタブが自分のウィンドウで選択されていること（`tab.active`）。`attended` は、それに加えてそのウィンドウにフォーカスがあること。`tabs.onActivated`・`windows.onFocusChanged`・`tabs.onRemoved`・`webNavigation`（`frameId === 0` の onCommitted・onHistoryStateUpdated・onCompleted）を契機に判定し直し、変わったら描画指示を送る。
 - ページ世代：役割のタブで onCommitted を受けたら `pageSeq` を進め、ページ側を組み込み直す（ページ側は起動時に `HELLO` を送り、その `sender.documentId` を記録する）。onHistoryStateUpdated を受けたら `pageSeq` を進めて描画し直す。
 - 判定：
@@ -52,7 +55,7 @@ keywords: [Service Worker, session, tabs, catalog, permissions]
 ## ツアー管理（background/catalog）
 
 - 役割：同梱ツアーと取り込んだツアーの一覧を持つ。実行中のツアーは、固定した `hash` の内容を返す。
-- 使い方：`list()`、`get(id)`、`getPinned(id, hash)`、`remove(id)`（そのツアーのファイル・保守記録も消し、合計容量を戻す）、`reload()`。
+- 使い方：ツアーの一覧、ID による取得、`hash` を固定した取得、削除、再読み込み。削除は、そのツアーのファイル・保守記録も消し、合計容量を戻す。コードは `src/background/catalog/`。状態管理との約束の型は `src/background/ports.ts`。
 - 取り込んだツアー：取り込み時に検証済みの内容（`compiled`。説明文の本体は含めず、ファイルのパスを持つ）を IndexedDB の `tours` に保存しておき、バックグラウンドはそれを zod で軽く検証し直して使う。バックグラウンドで YAML は解析しない。
 - 同梱ツアー：`runtime.onInstalled`（更新時を含む）のときに読み込んで解析し、`hash` を計算する（同梱は信頼できるデータで、量も小さいため）。
 - キャッシュ：メモリに持つ。`runtime.onInstalled`、`reload()`、`CATALOG_CHANGED` で捨てる。保存済みのデータだけから組み立て直せる。
@@ -61,5 +64,5 @@ keywords: [Service Worker, session, tabs, catalog, permissions]
 ## 権限（shared/permissions）
 
 - 役割：ツアーの `origins` から、ホストのマッチパターンを作り、確認・要求する。
-- 使い方：`patternsOf(tour)`（`origins` だけから作る。ポートは捨ててホスト単位にする）、`has(tour)`、`request(tour)`（サイドパネルの操作の中で、await を挟まずに呼ぶ）。`permissions.onRemoved` を受けたら、状態管理に一時中断（理由：許可の取り消し）を依頼する。
+- 使い方：ツアーの権限の一覧を `origins` だけから作る（ポートは捨ててホスト単位にする）。権限の有無の確認と要求ができる。要求は、サイドパネルの操作の中で、await を挟まずに呼ぶ。コードは `src/shared/permissions/`。`permissions.onRemoved` を受けたら、状態管理に一時中断（理由：許可の取り消し）を依頼する。
 - 頼るもの：chrome.permissions

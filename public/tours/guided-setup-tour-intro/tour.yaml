@@ -1,0 +1,124 @@
+schemaVersion: 3
+id: guided-setup-tour-intro
+name: Guided Setup Tour の使い方
+description: サイドパネル、ミニガイド、ハイライトと吹き出し、完了の目安、ステップの移動、表示の切り替え、一時中断と終了、ショートカットキー、取り込み、設定を、操作しながら 10 分ほどで学びます
+minExtensionVersion: 0.1.0
+origins:
+  - https://example.com
+tabs:
+  main:
+    label: 練習用のページ（example.com）
+    open: https://example.com/
+    url:
+      origin: https://example.com
+      path:
+        exact: /
+steps:
+  - id: intro
+    kind: guide
+    title: この拡張機能でできること
+    tip: サイドパネルが説明役です
+    bodyFile: steps/01-intro.md
+  - id: open-page
+    title: 練習用のページを開く
+    tip: ボタンを押すと開きます
+    bodyFile: steps/02-open-page.md
+    done:
+      type: page
+      url:
+        origin: https://example.com
+        path:
+          exact: /
+      hint: 練習用のページを開いてください
+      doneHint: 開けました。次へ進めます
+  - id: mini-guide
+    title: ミニガイドを使う
+    tip: 右端の小さな案内です
+    bodyFile: steps/03-mini-guide.md
+  - id: highlight
+    title: ハイライトと吹き出し
+    tip: 枠で示された場所を見てください
+    bodyFile: steps/04-highlight.md
+    target:
+      role: heading
+      name:
+        - Example Domain
+      require:
+        role: heading
+      fallbackText: ページの見出し「Example Domain」が対象です
+    done:
+      type: element
+      target:
+        role: heading
+        name:
+          - Example Domain
+        require:
+          role: heading
+      doneHint: 見出しが見つかりました
+  - id: hide-restore
+    title: 表示を消す・戻す
+    tip: 吹き出しの × で消せます
+    bodyFile: steps/05-hide-restore.md
+    target:
+      role: link
+      name:
+        - Learn more
+        - More information...
+        - More information
+      require:
+        role: link
+      fallbackText: ページ中ほどのリンクが対象です（押さないでください）
+  - id: done-hint
+    title: 完了の目安
+    tip: 「次へ進めます」を見てください
+    bodyFile: steps/06-done-hint.md
+    target:
+      role: link
+      name:
+        - Learn more
+        - More information...
+        - More information
+      require:
+        role: link
+      fallbackText: ページ中ほどのリンクが対象です（押さないでください）
+    done:
+      type: element
+      target:
+        role: link
+        name:
+          - Learn more
+          - More information...
+          - More information
+        require:
+          role: link
+      hint: リンクが見えているか確認しています
+      doneHint: 次へ進めます。満たさなくても、次へは押せます
+  - id: navigate
+    title: 次へ・戻る・一覧から移る
+    tip: 好きな順に移れます
+    bodyFile: steps/07-navigate.md
+  - id: pause-stop
+    kind: guide
+    title: 一時中断と終了の違い
+    tip: 続きから再開できるのは一時中断です
+    bodyFile: steps/08-pause-stop.md
+  - id: shortcut
+    kind: guide
+    title: ショートカットキーでサイドパネルを開く
+    tip: キーは自分で変えられます
+    bodyFile: steps/09-shortcut.md
+  - id: import
+    kind: guide
+    title: ツアーを取り込む
+    tip: 一覧の取り込みエリアを使います
+    bodyFile: steps/10-import.md
+  - id: settings
+    kind: guide
+    title: 設定と記録
+    tip: 困ったときの確認先です
+    bodyFile: steps/11-settings.md
+  - id: finish
+    kind: guide
+    title: これで終わりです
+    tip: 「完了」を押します
+    bodyFile: steps/12-finish.md

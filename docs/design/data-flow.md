@@ -14,7 +14,7 @@ keywords: [メッセージ, 保存]
 
 | 方向 | メッセージ |
 |---|---|
-| サイドパネル → バックグラウンド | `GET_STATE`、`START{tourId, resume, opId}`、`GOTO{to, sessionId, gen, opId}`、`PAUSE`・`RESUME`・`STOP`・`RESTART{sessionId, opId}`、`RESUME_NEW{sessionId, mode, opId}`、`BIND_TAB{tabId, force, sessionId, gen, opId}`、`OPEN_IN{mode, sessionId, gen, opId}`、`FOCUS_ROLE{sessionId, opId}`、`RECHECK`・`SCROLL_TO_TARGET{sessionId, gen, opId}`、`SET_OVERLAY{hidden, sessionId, opId}`、`SET_UI{enabled?, mode?, width?}`、`CATALOG_CHANGED{tourId, hash}`、`REMOVE{tourId}`、`RELOAD`、`GET_DIAGNOSTICS`、`EXPORT_LOGS`、`CLEAR_LOGS`、`LOG{entries[]}` |
+| サイドパネル → バックグラウンド | `GET_STATE`、`START{tourId, resume, opId}`、`GOTO{to, sessionId, gen, opId}`、`PAUSE`・`RESUME`・`STOP`・`RESTART{sessionId, opId}`、`RESUME_NEW{sessionId, mode, opId}`、`BIND_TAB{tabId, force, sessionId, gen, opId}`、`OPEN_IN{mode, sessionId, gen, opId}`、`FOCUS_ROLE{sessionId, gen, opId}`、`RECHECK`・`SCROLL_TO_TARGET{sessionId, gen, opId}`、`SET_OVERLAY{hidden, sessionId, opId}`、`SET_UI{enabled?, mode?, width?}`、`CATALOG_CHANGED{tourId, hash}`、`REMOVE{tourId}`、`RELOAD`、`GET_DIAGNOSTICS`、`EXPORT_LOGS`、`CLEAR_LOGS`、`LOG{entries[]}` |
 | ページ側 → バックグラウンド | `HELLO`、`LOCATE_RESULT{sessionId, gen, pageSeq, result}`、`HINT_STATE{sessionId, gen, pageSeq, met, unsupported}`、`GOTO`・`SCROLL_TO_TARGET`・`SET_OVERLAY`・`SET_UI`（ミニガイド・吹き出しからの利用者の操作）、`LOG{entries[]}` |
 | バックグラウンド → ページ側 | `PING`、`SYNC{sessionId, gen, rev}`、`RENDER{…, rev}`、`RECHECK{rev}`、`SCROLL_TO_TARGET{rev}`、`CLEAR{rev}` |
 | バックグラウンド → サイドパネル | `TOUR_STATE_CHANGED` |
@@ -32,7 +32,7 @@ keywords: [メッセージ, 保存]
 ## ② ミニガイドから次へ進み、完了ページへ移る
 
 1. ミニガイドの「次へ」をクリック（`isTrusted`）→ `GOTO{to, sessionId, gen, opId}`
-2. バックグラウンドは、`sender`（タブ・フレーム・文書）、`sessionId`・`gen` を確認して受け付け、`gen` を増やして確定し、進捗を保存し、`RENDER` を送る。同じ表示からサイドパネルでも「次へ」が押されていたら、`gen` が合わないので捨てる
+2. バックグラウンドは、`sender`（タブ・フレーム・文書）、`sessionId`・`gen` を確認して受け付け、`gen` を増やして確定し、進捗を保存し、`RENDER` を送る。同じ表示でサイドパネルの「次へ」も押されていた場合は、`gen` が合わないので捨てる
 3. 新しいステップで作成ボタンを押すと、`/tokens/created` へ遷移する → onCommitted → `pageSeq` を進める → `evaluate` → `donePage` → ミニガイドだけを描画し、`HINT_STATE` 相当の状態を「次へ進めます」にする
 
 ## ③ 実行中のツアーが上書きされる
@@ -46,7 +46,7 @@ keywords: [メッセージ, 保存]
 
 | データ | 保存先 | 項目 |
 |---|---|---|
-| 実行中の状態 | storage.session `tour` | status（running・paused・ended）、pauseReason、sessionId、gen、pageSeq、rev、tourId、hash、stepIndex、stepId、windowId、tabs{役割: {tabId, documentId}}、overlayHidden、hint{gen, met, unsupported}、tabStatus、saveError、recentOpIds[] |
+| 実行中の状態 | storage.session `tour` | status（running・paused・ended）、pauseReason、sessionId、gen、pageSeq、rev、tourId、hash、stepIndex、stepId、windowId、tabs{役割: {tabId, documentId}}、overlayHidden、hint{gen, met, unsupported}、tabStatus、saveError、notice、recentOpIds[] |
 | 進捗 | storage.local `progress` | tourId → {sessionId, gen, stepId, stepIndex, savedAt} |
 | 削除待ち | storage.local `pendingDeletes` | [{tourId, sessionId}] |
 | 設定 | storage.local `settings` | logLevel、miniGuide{enabled, mode, width} |

@@ -11,7 +11,7 @@ keywords: [zod, yaml, fflate, locator]
 ## ツアー形式・検証（core/tour）
 
 - 役割：ツアーの形式を zod で定義し、YAML を安全に解析する。zod のエラーの場所を、YAML の行番号に対応付ける。
-- 使い方：`parseTour(yamlText, fileName)` → ツアー、またはエラーの一覧（`{ file, line, path, message }`、最大20件）と警告の一覧。
+- 使い方：YAML の文字列とファイル名から、検証済みのツアーと警告の一覧、またはエラーの一覧（ファイル・行・場所・メッセージ。最大20件）と警告の一覧を返す。コードは `src/core/tour/`。
 - YAML の解析条件：YAML 1.2 の基本の型の規則、独自タグは拒否、マージキー（`<<`）は無効、重複キーはエラー、エイリアス展開は100まで、解析後に入れ子の深さが32を超えたらエラー。解析時の警告もエラーとして扱う。
 - 頼るもの：zod、yaml
 
@@ -22,7 +22,7 @@ keywords: [zod, yaml, fflate, locator]
 | ツアー | `schemaVersion: 3`、`id`（英数字・`.`・`_`・`-`）、`name`、`description?`、`updatedAt?`、`minExtensionVersion?`、`origins[]`（http/https、ワイルドカード不可）、`tabs{役割: {label?, open?, url?}}` |
 | ステップ | `id`、`title`、`kind: page \| guide`（既定は page）、`tab?`（既定は main）、`url?`（URL 条件）、`open?`、`body?` または `bodyFile?`、`tip?`、`media?{src, alt, caption?}`、`target?`、`done?` |
 | URL 条件 | `origin`（`origins` のいずれかと完全一致）、`path?{exact \| prefix \| glob}`（省略時はオリジン全体） |
-| target | 探索の手がかり：`tourId?`、`testId?`、`role?`＋`name[]`、`label[]`、`text[]`、`textTag?`、`match?: exact \| contains`、`css?[]`。探す範囲：`within?`（役割＋名前、ラベル、CSS のいずれか）。必須の照合：`require?{role?, inputType?, region?, name?[]}`。ハイライト：`highlight?{closest}`。`fallbackText?` |
+| target | 探索の手がかり：`tourId?`、`testId?`、`role?`＋`name[]`、`label[]`、`text[]`、`textTag?`、`match?: exact \| contains`、`css?[]`。探す範囲：`within?`（役割＋名前、ラベル、CSS のいずれか。全段階の既定の範囲）。`name`・`label`・`text`・`css` は、候補の配列か `{values[], within?}`（`within` は範囲か `page`。その段階だけ範囲を上書きする）。必須の照合：`require?{role?, inputType?, region?, name?[]}`。ハイライト：`highlight?{closest}`。`fallbackText?` |
 | done | `type: page \| element \| state`、`url?`（page のとき。URL 条件）、`target?`（element・state のとき。状態を判定する要素で、ハイライトする要素とは別に指定する）、`state?: filled \| checked \| selected \| expanded \| pressed`、`minLength?`、`allowHidden?`、`hint?`、`doneHint?` |
 
 検証の規則は次のとおりです。
@@ -34,21 +34,22 @@ keywords: [zod, yaml, fflate, locator]
 | `kind: guide` のステップは、`target`・`url`・`done` を持てない | エラー |
 | URL 条件のパスに正規表現の記号らしきもの（`(`、`[`、`\`、`$` など）がある、上限を超える | エラー |
 | `target` に `require` がなく、手がかりが段階1か段階5だけで、名前の候補もない | 警告（FR-10） |
+| `role` があり、`name` がない | 警告（FR-10） |
 
 ## URL 条件（core/tour/url）
 
 - 役割：URL 条件と URL を、手間がパターンと URL の長さで抑えられる方式で照合する。
-- 使い方：`matchUrl(cond, url)` → 真偽値。
-- 正規化：`new URL()` で解析し、クエリとフラグメントを捨てる。`origin` は完全一致で比べる。パスは、ブラウザが正規化した `pathname` をそのまま使い（パーセントエンコードは戻さない）、大文字・小文字を区別する。末尾の `/` は取り除く（ルートの `/` は除く）。`/` で区間に分け、空の区間は詰める。区間が256を超える URL は一致しないとみなす。
+- 使い方：URL 条件と URL から、一致するかどうかを返す。コードは `src/core/tour/url.ts`。
+- 正規化：`new URL()` で解析し、クエリとフラグメントを捨てる。`origin` は完全一致で比べる。パスは、ブラウザが正規化した `pathname` をそのまま使い（パーセントエンコードは戻さない）、大文字・小文字を区別する。末尾の `/` は取り除く（ルートの `/` は除く）。`/` で区間に分け、空の区間は詰める。区間が256を超える URL は一致しないとみなす。条件の側のパスも、ツアー形式の解析の時点で、ブラウザと同じ形（非 ASCII や空白をパーセントエンコードした区間。`*`・`**` の区間はそのまま）にそろえる。
 - 照合：`exact` は区間の列が完全に一致する。`prefix` は先頭の区間が一致する（区間の途中では一致させない）。`glob` は、`*` が1区間、`**` が0個以上の区間に一致する。区間単位の動的計画法で照合し、手間を「パターンの区間数 × URL の区間数」以内に抑える。
 - 頼るもの：なし
 
 ## ツアーパッケージの取り込み（core/package、sidepanel/import）
 
 - 役割：サイドパネルで `.yaml` 単体または `.zip` を受け取り、検証して IndexedDB に保存する。バックグラウンドへはファイルの中身を送らない。
-- 使い方：`importFiles(files[])` → ファイルごとの結果（成功：ツアー名・対象サイト・警告／失敗：エラーの一覧）。
+- 使い方：受け取ったファイルごとに、成功（ツアー名・対象サイト・警告）か失敗（エラーの一覧）を返す。検証は `src/core/package/`、保存と取り込みの入口は `src/sidepanel/import/`。
 - 処理：
-  1. 圧縮サイズを確認する。fflate の逐次展開を使い、実際に展開したバイト数を数えながら、展開後の合計とファイル数の上限を超えた時点で打ち切る
+  1. 圧縮サイズを確認する。fflate の逐次展開を使い、実際に展開したバイト数を数えながら、展開後の合計・ファイル数・項目の総数の上限（値は上限値の表）を超えた時点で打ち切る。圧縮側のデータは 4 KB 以下に区切って渡し、展開結果を受け取るたびに合計を確かめる。エントリが宣言する展開後のサイズは判定に使わない
   2. 各エントリの名前を検査する。拒否するもの：`\`・NUL を含む、絶対パス、ドライブ名、空の区間、`..` の区間、シンボリックリンク。大文字・小文字を区別せずに重複していれば拒否する
   3. `tour.yaml` を解析する。`bodyFile` と `media.src` は `tour.yaml` の場所を起点に、Markdown 内の画像はその Markdown ファイルの場所を起点に解決する。解決したパスがパッケージの外に出るもの、存在しないものはエラーにする
   4. 画像は、拡張子と署名（PNG・JPEG・GIF・WebP）が一致し、ヘッダーから読んだ縦横の画素数が上限内であることを確認する（PNG は IHDR、GIF は論理画面記述子、JPEG は SOF マーカーまでを範囲を決めて走査、WebP は VP8・VP8L・VP8X）。展開（デコード）はしない
@@ -63,7 +64,7 @@ keywords: [zod, yaml, fflate, locator]
 ## 要素特定エンジン（core/locator）
 
 - 役割：target の指定から、一意に決まる操作対象を1つ見つけ、ハイライトする要素と結果の種類を返す。
-- 使い方：`locate(target, doc, env)` → 次の結果。`env` は「表示されているか」の判定と、読み上げ名・役割の計算を差し替えるためのもの（テスト用）。
+- 使い方：手がかり・文書・環境から、特定の結果（特定できたか、どの段階か、できなかった理由）を返す。環境は、「表示されているか」の判定と、読み上げ名・役割の計算を差し替えるためのもの（テスト用）。コードは `src/core/locator/`。
 
 | 項目 | 内容 |
 |---|---|
@@ -73,7 +74,7 @@ keywords: [zod, yaml, fflate, locator]
 | `counts` | 段階ごとの候補数（集めた数・必須の照合後・表示の確認後） |
 
 - 処理（段階ごと）：
-  1. 探す範囲：`within` を解決する。0件か2件以上なら、範囲を使うこの手がかりは失敗とする（ページ全体には広げない）
+  1. 探す範囲：その段階の手がかりに `within` があればそれを、無ければ `target.within` を解決する（`page`、またはどちらも無ければページ全体）。0件か2件以上なら、その範囲を使う段階は失敗とする（ページ全体には広げない）
   2. 候補を集める。ページ側の表示のホスト要素とその中身は、常に除外する
 
      | 段階 | 探し方 |
