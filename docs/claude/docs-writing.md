@@ -120,8 +120,8 @@ ADRは決めた時点の記録なので、本文を書き換えない。覆す�
 
 | type | 対象 |
 |---|---|
-| `requirements` | `docs/requirements.md` |
-| `design` | `docs/design.md` |
-| `adr` | `docs/adr/NNNN-*.md` |
+| `requirements` | `docs/requirements.md`・`docs/requirements/**` |
+| `design` | `docs/design.md`・`docs/design/**` |
+| `adr` | `docs/adr/NNNN-*.md`・`docs/adr/README.md`（書式は[ADRの README](../adr/README.md)） |
 | `guide` | `docs/claude/*.md` |
-| `report` | `docs/tmp/`の下書き・調査・退避した決定事項 |
+| `report` | `docs/tmp/`の下書き・調査 |

@@ -1,0 +1,96 @@
+---
+title: 部品：コア
+type: design
+description: ツアー形式・検証、URL 条件、ツアーパッケージの取り込み、要素特定エンジン
+tags: [design-doc]
+keywords: [zod, yaml, fflate, locator]
+---
+
+# 部品：コア
+
+## ツアー形式・検証（core/tour）
+
+- 役割：ツアーの形式を zod で定義し、YAML を安全に解析する。zod のエラーの場所を、YAML の行番号に対応付ける。
+- 使い方：`parseTour(yamlText, fileName)` → ツアー、またはエラーの一覧（`{ file, line, path, message }`、最大20件）と警告の一覧。
+- YAML の解析条件：YAML 1.2 の基本の型の規則、独自タグは拒否、マージキー（`<<`）は無効、重複キーはエラー、エイリアス展開は100まで、解析後に入れ子の深さが32を超えたらエラー。解析時の警告もエラーとして扱う。
+- 頼るもの：zod、yaml
+
+ツアー形式（schemaVersion 3）の項目は次のとおりです。
+
+| 階層 | 項目 |
+|---|---|
+| ツアー | `schemaVersion: 3`、`id`（英数字・`.`・`_`・`-`）、`name`、`description?`、`updatedAt?`、`minExtensionVersion?`、`origins[]`（http/https、ワイルドカード不可）、`tabs{役割: {label?, open?, url?}}` |
+| ステップ | `id`、`title`、`kind: page \| guide`（既定は page）、`tab?`（既定は main）、`url?`（URL 条件）、`open?`、`body?` または `bodyFile?`、`tip?`、`media?{src, alt, caption?}`、`target?`、`done?` |
+| URL 条件 | `origin`（`origins` のいずれかと完全一致）、`path?{exact \| prefix \| glob}`（省略時はオリジン全体） |
+| target | 探索の手がかり：`tourId?`、`testId?`、`role?`＋`name[]`、`label[]`、`text[]`、`textTag?`、`match?: exact \| contains`、`css?[]`。探す範囲：`within?`（役割＋名前、ラベル、CSS のいずれか）。必須の照合：`require?{role?, inputType?, region?, name?[]}`。ハイライト：`highlight?{closest}`。`fallbackText?` |
+| done | `type: page \| element \| state`、`url?`（page のとき。URL 条件）、`target?`（element・state のとき。状態を判定する要素で、ハイライトする要素とは別に指定する）、`state?: filled \| checked \| selected \| expanded \| pressed`、`minLength?`、`allowHidden?`、`hint?`、`doneHint?` |
+
+検証の規則は次のとおりです。
+
+| 規則 | 違反時 |
+|---|---|
+| `tabs.*.open`・`steps.*.open`・すべての URL 条件の `origin` が `origins` に含まれる | エラー |
+| `kind: page` のステップは、`url` か、役割の `tabs.<役割>.url` のどちらかを持つ | エラー |
+| `kind: guide` のステップは、`target`・`url`・`done` を持てない | エラー |
+| URL 条件のパスに正規表現の記号らしきもの（`(`、`[`、`\`、`$` など）がある、上限を超える | エラー |
+| `target` に `require` がなく、手がかりが段階1か段階5だけで、名前の候補もない | 警告（FR-10） |
+
+## URL 条件（core/tour/url）
+
+- 役割：URL 条件と URL を、手間がパターンと URL の長さで抑えられる方式で照合する。
+- 使い方：`matchUrl(cond, url)` → 真偽値。
+- 正規化：`new URL()` で解析し、クエリとフラグメントを捨てる。`origin` は完全一致で比べる。パスは、ブラウザが正規化した `pathname` をそのまま使い（パーセントエンコードは戻さない）、大文字・小文字を区別する。末尾の `/` は取り除く（ルートの `/` は除く）。`/` で区間に分け、空の区間は詰める。区間が256を超える URL は一致しないとみなす。
+- 照合：`exact` は区間の列が完全に一致する。`prefix` は先頭の区間が一致する（区間の途中では一致させない）。`glob` は、`*` が1区間、`**` が0個以上の区間に一致する。区間単位の動的計画法で照合し、手間を「パターンの区間数 × URL の区間数」以内に抑える。
+- 頼るもの：なし
+
+## ツアーパッケージの取り込み（core/package、sidepanel/import）
+
+- 役割：サイドパネルで `.yaml` 単体または `.zip` を受け取り、検証して IndexedDB に保存する。バックグラウンドへはファイルの中身を送らない。
+- 使い方：`importFiles(files[])` → ファイルごとの結果（成功：ツアー名・対象サイト・警告／失敗：エラーの一覧）。
+- 処理：
+  1. 圧縮サイズを確認する。fflate の逐次展開を使い、実際に展開したバイト数を数えながら、展開後の合計とファイル数の上限を超えた時点で打ち切る
+  2. 各エントリの名前を検査する。拒否するもの：`\`・NUL を含む、絶対パス、ドライブ名、空の区間、`..` の区間、シンボリックリンク。大文字・小文字を区別せずに重複していれば拒否する
+  3. `tour.yaml` を解析する。`bodyFile` と `media.src` は `tour.yaml` の場所を起点に、Markdown 内の画像はその Markdown ファイルの場所を起点に解決する。解決したパスがパッケージの外に出るもの、存在しないものはエラーにする
+  4. 画像は、拡張子と署名（PNG・JPEG・GIF・WebP）が一致し、ヘッダーから読んだ縦横の画素数が上限内であることを確認する（PNG は IHDR、GIF は論理画面記述子、JPEG は SOF マーカーまでを範囲を決めて走査、WebP は VP8・VP8L・VP8X）。展開（デコード）はしない
+  5. data URL は、`image/png`・`image/jpeg`・`image/gif`・`image/webp` だけを受け付け、4と同じ検査を行う
+  6. SVG、外部 URL、単体 YAML での相対パスはエラーにする
+  7. 同じ ID のツアーがあれば、上書きの確認を出す（同梱版の置き換え、実行中なら一時中断になることを示す）。承認されなければ保存しない
+  8. 保存：内容のハッシュ（`hash`）を計算し、IndexedDB の1つの書き込みトランザクションの中で、合計容量を `meta.totalBytes` から確認して予約する。そのうえで、`files` に新しい版のファイルを書き、`tours` の向き先を新しい版に切り替え、旧版のファイルを消す。同時に複数を取り込んでも、トランザクションが順に処理されるため、合計容量の上限を超えない
+  9. バックグラウンドに `CATALOG_CHANGED{tourId, hash}` を送る
+- 取り込み中も、サイドパネルの他の操作（終了・一時中断）は受け付ける。展開は fflate の非同期の処理で行い、画面の処理を長く占有しない。
+- 頼るもの：fflate、yaml、ツアー形式・検証、IndexedDB
+
+## 要素特定エンジン（core/locator）
+
+- 役割：target の指定から、一意に決まる操作対象を1つ見つけ、ハイライトする要素と結果の種類を返す。
+- 使い方：`locate(target, doc, env)` → 次の結果。`env` は「表示されているか」の判定と、読み上げ名・役割の計算を差し替えるためのもの（テスト用）。
+
+| 項目 | 内容 |
+|---|---|
+| `target` / `highlightEl` | 操作対象と、ハイライトする要素（読み替え後） |
+| `tier` / `topTier` | 採用した段階と、ツアーに書かれた最も上位の段階 |
+| `reasons` | `degraded`（下位の段階で成功）、`conflict`（ある段階で必須の照合の前の候補がちょうど1件で、それが捨てられた）、`missing`（すべての段階で失敗）、`nameMismatch`（段階1・5で補助の照合が不一致）の組み合わせ。正常なら空 |
+| `counts` | 段階ごとの候補数（集めた数・必須の照合後・表示の確認後） |
+
+- 処理（段階ごと）：
+  1. 探す範囲：`within` を解決する。0件か2件以上なら、範囲を使うこの手がかりは失敗とする（ページ全体には広げない）
+  2. 候補を集める。ページ側の表示のホスト要素とその中身は、常に除外する
+
+     | 段階 | 探し方 |
+     |---|---|
+     | 1 | `[data-tour-id]`、`[data-testid]` |
+     | 2 | `role`（暗黙の役割を含む）で候補を絞り、読み上げ名を `name[]` と照合する |
+     | 3 | フォーム部品の読み上げ名を `label[]` と照合する |
+     | 4 | `textTag`（既定は button、a、label、[role]）の、見えている文字列を `text[]` と照合する。入れ子の要素が両方一致した場合は、最も内側の要素だけを残す |
+     | 5 | `css[]` を順に試す |
+
+  3. 必須の照合で絞る：`require.role`（計算した役割）、`require.inputType`、`require.region`（指定した領域の中にあるか）、`require.name`（読み上げ名がいずれかの候補と一致するか）。絞る前の候補がちょうど1件で、それが捨てられたら `conflict` を記録する
+  4. 表示されているかを確認する（`allowHidden` がなければ、表示されていない候補を除く）
+  5. **操作対象がちょうど1件であることを確認する**。そうでなければ次の段階へ進む
+  6. `highlight.closest` があれば、ハイライトする要素を祖先に読み替える
+  7. 読み替えた要素が表示されていて、`html`・`body`、または表示領域全体を覆う要素でないことを確認する。不適格なら、この段階は失敗として次の段階へ進む
+  8. 補助の照合：段階1・5で採用し、名前の候補（`name`・`label`・`text`）が書かれていて、`require.name` がない場合は、読み上げ名と照合する。一致しなければ `nameMismatch` を記録する（採用はする）
+- 名前の正規化：NFKC 正規化、空白をまとめる、前後の空白を削る、英字の大文字・小文字を区別しない。
+- 表示されているか：`getClientRects()` が空でなく大きさが0より大きいこと、かつ `checkVisibility`（透明度と `visibility` の確認を有効にする。Chrome 114 の指定の名前と新しい指定の名前の両方を渡す）が真であること。祖先の矩形は求めない。画面外であることは問わない。
+- 読み上げ名：dom-accessibility-api で計算する。返すのは照合の結果だけで、名前の文字列は呼び出し元へ返さない。
+- 頼るもの：dom-accessibility-api
