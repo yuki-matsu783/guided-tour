@@ -40,9 +40,9 @@ export interface RouterDeps {
   };
   readonly catalog: Pick<CatalogPort, 'reload' | 'remove'>;
   readonly diagnostics: Pick<Diagnostics, 'list' | 'export' | 'clear'>;
-  /** `ingest` の第2引数は、送り手の実行場所（logstore 側の対応が入るまでは無視される）。 */
+  /** `ingest` には検証前の元の LOG メッセージと、送り手の実行場所を渡す。 */
   readonly logstore: {
-    ingest(message: unknown, ctx?: Ctx): void;
+    ingest(message: unknown, ctx: Ctx): void;
     exportJsonl: LogStore['exportJsonl'];
     clear: LogStore['clear'];
   };
@@ -136,9 +136,10 @@ export function createRouter(deps: RouterDeps): {
     }
   }
 
-  function handlePanelMessage(msg: PanelToBg, sendResponse: SendResponse): boolean {
+  function handlePanelMessage(msg: PanelToBg, raw: unknown, sendResponse: SendResponse): boolean {
+    // LOG は、検証で各行の形が変わる前の元のメッセージを渡す（ログの保管が各行を検査し直す）
     if (msg.type === 'LOG') {
-      logstore.ingest(msg, 'sidepanel');
+      logstore.ingest(raw, 'sidepanel');
       return false;
     }
     void deps
@@ -160,7 +161,7 @@ export function createRouter(deps: RouterDeps): {
     const msg = parsePageToBg(raw, logger);
     if (msg === null) return false;
     if (msg.type === 'LOG') {
-      logstore.ingest(msg, 'content');
+      logstore.ingest(raw, 'content');
       return false;
     }
     const pageSender = {
@@ -184,7 +185,7 @@ export function createRouter(deps: RouterDeps): {
       // サイドパネルを通常のタブで開いたときも `sender.tab` が付くので、先に `sender.url` で確かめる
       if (isSidePanelSender(sender, deps.extensionId)) {
         const msg = parsePanelToBg(raw, sender, deps.extensionId, logger);
-        return msg === null ? false : handlePanelMessage(msg, sendResponse);
+        return msg === null ? false : handlePanelMessage(msg, raw, sendResponse);
       }
       if (sender.tab !== undefined && sender.frameId === 0) {
         return handlePageMessage(raw, sender, sendResponse);

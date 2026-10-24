@@ -3,6 +3,7 @@
  * Chrome API と部品は偽物を差し込む。
  */
 import { describe, expect, it, vi } from 'vitest';
+import { parseLogMessage } from '../../shared/logger/index.ts';
 import { PanelViewSchema } from '../../shared/messages/index.ts';
 import { createRouter, type MessageSenderLike, type RouterDeps } from './router.ts';
 import { createStartup } from './startup.ts';
@@ -225,5 +226,24 @@ describe('配線', () => {
     await startup.start();
     expect(order).toEqual(['logstore', 'recover', 'panel']);
     expect(error).toHaveBeenCalledTimes(1);
+  });
+
+  it('R-WIRE-11: サイドパネルとページ側の LOG は、ログの保管がそのまま検査し直せる元の形で渡す', () => {
+    const t = setup();
+    const entry = {
+      ts: 1,
+      level: 'info',
+      ctx: 'sidepanel',
+      event: 'import.result',
+      fields: { result: 'imported', files: 1, bytes: 10 },
+    };
+    const log = { type: 'LOG', entries: [entry] };
+    t.router.onMessage(log, PANEL, vi.fn());
+    t.router.onMessage({ ...log, entries: [{ ...entry, ctx: 'content' }] }, PAGE, vi.fn());
+    expect(t.logstore.ingest).toHaveBeenCalledTimes(2);
+    for (const [message] of t.logstore.ingest.mock.calls) {
+      const parsed = parseLogMessage(message);
+      expect(parsed?.map((r) => r.ok)).toEqual([true]);
+    }
   });
 });

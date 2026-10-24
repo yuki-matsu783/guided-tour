@@ -206,6 +206,21 @@ describe('受け付けと破棄', () => {
     expect(badSender.status).toBe('discarded');
   });
 
+  it('R-LOG-RESULT: 受け付けた探索の結果は、文字列を含まない要約だけを locator.result として debug に記録する', async () => {
+    const env = await running();
+    const { sessionId, gen } = cur(env);
+    const pageSeq = PageSeqSchema.parse(env.state()?.pageSeq ?? 0);
+    const result = { found: false, tier: null, topTier: 1 as const, reasons: ['missing' as const], counts: [] };
+    await env.session.handlePage({ type: 'LOCATE_RESULT', sessionId, gen, pageSeq, result }, sender());
+    const logged = env.logs.filter((l) => l.event === 'locator.result');
+    expect(logged).toEqual([
+      { level: 'debug', event: 'locator.result', fields: { tier: null, topTier: 1, reasons: ['missing'], counts: [] } },
+    ]);
+    // 捨てた報告は記録しない
+    await env.session.handlePage({ type: 'LOCATE_RESULT', sessionId, gen, pageSeq: PageSeqSchema.parse(99), result }, sender());
+    expect(env.logs.filter((l) => l.event === 'locator.result')).toHaveLength(1);
+  });
+
   it('T-SES-12: 報告の pageSeq が現在と違うとき、捨てられる', async () => {
     const env = await running();
     const res = await env.session.handlePage(report(env, { pageSeq: 9 }), sender());

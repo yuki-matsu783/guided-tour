@@ -923,9 +923,13 @@ export function createSession(deps: SessionDeps): Session {
         if (msg.gen !== st.gen || msg.pageSeq !== st.pageSeq) return { res: discard('staleReport') };
         if (msg.type === 'LOCATE_RESULT') {
           const { tourId, stepId, sessionId, gen } = st;
+          const { tier, topTier, reasons, counts } = msg.result;
           return {
             res: DONE,
-            after: () => deps.diagnostics.record(tourId, stepId, sessionId, gen, msg.result),
+            after: () => {
+              deps.logger.debug('locator.result', { tier, topTier, reasons, counts });
+              return deps.diagnostics.record(tourId, stepId, sessionId, gen, msg.result);
+            },
           };
         }
         const unchanged =
