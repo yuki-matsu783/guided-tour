@@ -118,6 +118,12 @@ export function App({ deps }: { deps: PanelDeps }): ReactNode {
     [deps, holder, refresh],
   );
 
+  // 新しい表示（gen の変化）が届いたことを、移動の操作の受け付けに伝える
+  const viewGen = view?.gen ?? null;
+  useLayoutEffect(() => {
+    ops.shown(viewGen);
+  }, [ops, viewGen]);
+
   const confirmOverwrite = useCallback(
     (request: OverwriteRequest) =>
       new Promise<boolean>((resolve) => {

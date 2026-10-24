@@ -12,6 +12,7 @@ import {
   type SessionId,
 } from '../../shared/ids/index.ts';
 import {
+  OpResponseSchema,
   UI_WIDTH_MAX,
   UI_WIDTH_MIN,
   type PageToBg,
@@ -23,6 +24,7 @@ import { attachClosed, createOwnHost, type AttachShadow, type OwnHost } from '..
 import type { HintKind } from '../hint-text.ts';
 import { defaultTimers, type TimerHandle } from '../timers.ts';
 import { defaultTrust, type TrustCheck } from '../trust.ts';
+import { createMoveGate } from '../../shared/move-gate/index.ts';
 import { MINIGUIDE_CSS } from './styles.ts';
 
 /** 最小化したバーの幅（px）。 */
@@ -55,13 +57,16 @@ export interface MiniGuideModel {
 
 export interface MiniGuideDeps {
   doc: Document;
-  send: (message: PageToBg) => void;
+  /** バックグラウンドへ送り、応答を（検証せずに）返す。失敗は拒否する。 */
+  send: (message: PageToBg) => Promise<unknown>;
   newOpId?: () => OpId;
   isTrusted?: TrustCheck;
   attachShadow?: AttachShadow;
   viewport?: () => Size;
   setTimer?: (fn: () => void, ms: number) => TimerHandle;
   clearTimer?: (id: TimerHandle) => void;
+  /** 現在時刻（ミリ秒）。移動の操作の受け付けの待ちに使う。 */
+  now?: () => number;
 }
 
 export interface MiniGuide {
@@ -141,6 +146,7 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
     }));
   const setTimer = deps.setTimer ?? defaultTimers.setTimer;
   const clearTimer = deps.clearTimer ?? defaultTimers.clearTimer;
+  const gate = createMoveGate(deps.now ?? ((): number => Date.now()));
 
   let view: View | null = null;
   let model: MiniGuideModel | null = null;
@@ -167,16 +173,42 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
 
   function sendUi(): void {
     pendingUi = [...pendingUi, { mode, width }].slice(-64);
-    deps.send({ type: 'SET_UI', mode, width });
+    void deps.send({ type: 'SET_UI', mode, width });
   }
 
-  function sendOp(kind: 'GOTO' | 'SCROLL_TO_TARGET' | 'SET_OVERLAY', to?: number): void {
+  function sendOp(kind: 'SCROLL_TO_TARGET' | 'SET_OVERLAY'): void {
     if (model === null) return;
     const { sessionId, gen } = model;
     const opId = newOpId();
-    if (kind === 'GOTO') deps.send({ type: 'GOTO', to: to ?? 0, sessionId, gen, opId });
-    else if (kind === 'SCROLL_TO_TARGET') deps.send({ type: 'SCROLL_TO_TARGET', sessionId, gen, opId });
-    else deps.send({ type: 'SET_OVERLAY', hidden: false, sessionId, opId });
+    if (kind === 'SCROLL_TO_TARGET') void deps.send({ type: 'SCROLL_TO_TARGET', sessionId, gen, opId });
+    else void deps.send({ type: 'SET_OVERLAY', hidden: false, sessionId, opId });
+  }
+
+  /**
+   * 移動の操作を送る。新しい表示が届くまで・届いてから 500 ミリ秒の間は送らない。
+   * 受け付けられなかった（`done` 以外・応答が取れない・形が違う）ときは、新しい表示が来ないので次の移動を許す。
+   */
+  function sendGoto(to: number): void {
+    if (model === null || !gate.tryMove()) return;
+    const { sessionId, gen } = model;
+    // 応答が遅れて、すでに新しい表示になっているときは、新しい表示の待ちを解かない
+    const releaseIfSame = (): void => {
+      if (model?.gen === gen) gate.release();
+    };
+    let sending: Promise<unknown>;
+    try {
+      sending = deps.send({ type: 'GOTO', to, sessionId, gen, opId: newOpId() });
+    } catch {
+      releaseIfSame();
+      return;
+    }
+    void sending.then(
+      (raw) => {
+        const parsed = OpResponseSchema.safeParse(raw);
+        if (!parsed.success || parsed.data.status !== 'done') releaseIfSame();
+      },
+      releaseIfSame,
+    );
   }
 
   function isExpanded(): boolean {
@@ -247,8 +279,8 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
     const tip = el('div', 'tip');
     const hint = el('div', 'hint');
     const fallback = el('div', 'fallback');
-    const back = button('戻る', () => { if (model) sendOp('GOTO', model.index - 1); });
-    const next = button('次へ', () => { if (model) sendOp('GOTO', model.index + 1); });
+    const back = button('戻る', () => { if (model) sendGoto(model.index - 1); });
+    const next = button('次へ', () => { if (model) sendGoto(model.index + 1); });
     const reveal = button('対象を表示', () => { sendOp('SCROLL_TO_TARGET'); });
     const restore = button('表示を戻す', () => { sendOp('SET_OVERLAY'); });
     const actions = el('div', 'actions');
@@ -429,6 +461,7 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
     lastUi = null;
     hoverOpen = false;
     drag = null;
+    gate.shown(null);
     notifyRect();
   }
 
@@ -438,6 +471,7 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
         remove();
         return;
       }
+      gate.shown(next.gen);
       let uiChanged = lastUi?.mode !== ui.mode || lastUi.width !== ui.width;
       // 自分が送った設定の反映なら、手元の値（連続した操作で先へ進んでいることがある）を保つ
       const echoed = pendingUi.findIndex((p) => p.mode === ui.mode && p.width === ui.width);

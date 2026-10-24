@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OWN_HOST_ATTRIBUTE } from '../../core/locator/index.ts';
 import type { PageToBg, UiSettings } from '../../shared/messages/index.ts';
 import { gen, nextOpId, sid } from '../test-support.ts';
+import { MOVE_ACCEPT_DELAY_MS } from '../../shared/move-gate/index.ts';
 import { BAR_WIDTH, createMiniGuide, HOVER_CLOSE_MS, type MiniGuideModel } from './index.ts';
 
 const MODEL: MiniGuideModel = {
@@ -30,14 +31,18 @@ interface Setup {
   mg: ReturnType<typeof createMiniGuide>;
 }
 
-function setup(trusted = true): Setup {
+function setup(trusted = true, now?: () => number, respond: () => Promise<unknown> = () => Promise.resolve({ status: 'done' })): Setup {
   const roots: ShadowRoot[] = [];
   const sent: PageToBg[] = [];
   const mg = createMiniGuide({
     doc: document,
-    send: (m) => sent.push(m),
+    send: (m) => {
+      sent.push(m);
+      return respond();
+    },
     newOpId: nextOpId,
     isTrusted: () => trusted,
+    ...(now === undefined ? {} : { now }),
     viewport: () => ({ width: 1000, height: 800 }),
     attachShadow: (host) => {
       const root = host.attachShadow({ mode: 'closed' });
@@ -113,7 +118,7 @@ describe('表示の条件', () => {
   });
 
   it('T-MG-04: ホストは閉じた Shadow DOM で、ページから shadowRoot を取得できない', () => {
-    const mg = createMiniGuide({ doc: document, send: () => undefined });
+    const mg = createMiniGuide({ doc: document, send: () => Promise.resolve({ status: 'done' }) });
     mg.renderMiniGuide(MODEL, UI);
     const host = document.querySelector(`[${OWN_HOST_ATTRIBUTE}]`);
     expect(host).not.toBeNull();
@@ -499,8 +504,13 @@ describe('ボタンの操作', () => {
     const s = setup();
     s.mg.renderMiniGuide(MODEL, UI);
     const next = buttonByText(s, '次へ');
+    // 移動は、新しい表示が届いて 500 ミリ秒たってから受け付けるので、押す間に新しい表示を挟む
     click(next);
+    s.mg.renderMiniGuide({ ...MODEL, gen: gen(5) }, UI);
+    vi.advanceTimersByTime(MOVE_ACCEPT_DELAY_MS);
     click(next);
+    s.mg.renderMiniGuide({ ...MODEL, gen: gen(6) }, UI);
+    vi.advanceTimersByTime(MOVE_ACCEPT_DELAY_MS);
     click(next);
     const ids = s.sent.flatMap((m) => (m.type === 'GOTO' ? [m.opId] : []));
     expect(new Set(ids).size).toBe(3);
@@ -508,15 +518,142 @@ describe('ボタンの操作', () => {
 
   it('T-MG-35: 既定の opId（crypto.randomUUID）でも別の値になる', () => {
     const sent: PageToBg[] = [];
-    const mg = createMiniGuide({ doc: document, send: (m) => sent.push(m), isTrusted: () => true, attachShadow: (h) => h.attachShadow({ mode: 'open' }) });
+    const mg = createMiniGuide({ doc: document, send: (m) => { sent.push(m); return Promise.resolve({ status: 'done' }); }, isTrusted: () => true, attachShadow: (h) => h.attachShadow({ mode: 'open' }) });
     mg.renderMiniGuide(MODEL, UI);
     const next = Array.from(document.querySelector(`[${OWN_HOST_ATTRIBUTE}]`)?.shadowRoot?.querySelectorAll('button') ?? []).find((b) => b.textContent === '次へ');
     next?.dispatchEvent(new MouseEvent('click'));
+    mg.renderMiniGuide({ ...MODEL, gen: gen(5) }, UI);
+    vi.advanceTimersByTime(MOVE_ACCEPT_DELAY_MS);
     next?.dispatchEvent(new MouseEvent('click'));
     const ids = sent.flatMap((m) => (m.type === 'GOTO' ? [m.opId] : []));
     expect(ids).toHaveLength(2);
     expect(ids[0]).not.toBe(ids[1]);
     mg.remove();
+  });
+});
+
+describe('移動の直後の操作の受け付け', () => {
+  const moves = (s: Setup): PageToBg[] => s.sent.filter((m) => m.type === 'GOTO');
+
+  it('R-ADR73-01: 移動を送った後は、新しい表示が届くまで、次の移動を送らない', () => {
+    const clock = { t: 0 };
+    const s = setup(true, () => clock.t);
+    s.mg.renderMiniGuide(MODEL, UI);
+    click(buttonByText(s, '次へ'));
+    clock.t += 10_000;
+    click(buttonByText(s, '次へ'));
+    click(buttonByText(s, '戻る'));
+    expect(moves(s)).toHaveLength(1);
+    // 同じ gen の描き直しでは、新しい表示にならない
+    s.mg.renderMiniGuide({ ...MODEL, hintKind: 'met' }, UI);
+    clock.t += 10_000;
+    click(buttonByText(s, '次へ'));
+    expect(moves(s)).toHaveLength(1);
+  });
+
+  it('R-ADR73-02: 新しい表示から499ミリ秒は移動を送らず、500ミリ秒で送る', () => {
+    const clock = { t: 1000 };
+    const s = setup(true, () => clock.t);
+    s.mg.renderMiniGuide(MODEL, UI);
+    click(buttonByText(s, '次へ'));
+    s.mg.renderMiniGuide({ ...MODEL, gen: gen(5), index: 2 }, UI);
+    clock.t += MOVE_ACCEPT_DELAY_MS - 1;
+    click(buttonByText(s, '戻る'));
+    click(buttonByText(s, '次へ'));
+    expect(moves(s)).toHaveLength(1);
+    // 受け付けない間も、ボタンは押せる見た目のまま
+    expect(buttonByText(s, '次へ').disabled).toBe(false);
+    clock.t += 1;
+    click(buttonByText(s, '戻る'));
+    expect(moves(s)).toHaveLength(2);
+    expect(moves(s)[1]).toMatchObject({ to: 1, gen: gen(5) });
+  });
+
+  it('R-ADR73-03: 完了も同じ規則で、待ちの間は送らない', () => {
+    const clock = { t: 0 };
+    const s = setup(true, () => clock.t);
+    s.mg.renderMiniGuide({ ...MODEL, index: 1 }, UI);
+    click(buttonByText(s, '次へ'));
+    s.mg.renderMiniGuide({ ...MODEL, gen: gen(5), index: 2, isLast: true }, UI);
+    clock.t += MOVE_ACCEPT_DELAY_MS - 1;
+    click(buttonByText(s, '完了'));
+    expect(moves(s)).toHaveLength(1);
+    clock.t += 1;
+    click(buttonByText(s, '完了'));
+    expect(moves(s)).toHaveLength(2);
+    expect(moves(s)[1]).toMatchObject({ to: 3 });
+  });
+
+  it('R-ADR73-04: ほかの操作（対象を表示・表示を戻す・最小化）は、移動の待ちで止まらない', () => {
+    const clock = { t: 0 };
+    const s = setup(true, () => clock.t);
+    s.mg.renderMiniGuide({ ...MODEL, overlayHidden: true }, UI);
+    click(buttonByText(s, '次へ'));
+    s.mg.renderMiniGuide({ ...MODEL, gen: gen(5), overlayHidden: true }, UI);
+    click(buttonByText(s, '対象を表示'));
+    click(buttonByText(s, '表示を戻す'));
+    click(buttonByText(s, '最小化'));
+    expect(s.sent.map((m) => m.type)).toEqual(['GOTO', 'SCROLL_TO_TARGET', 'SET_OVERLAY', 'SET_UI']);
+  });
+
+  it('R-ADR73-05: 注入された時刻とタイマーだけで判定する（偽のタイマーを進めても時刻が進まなければ送らない）', () => {
+    const s = setup(true, () => 0);
+    s.mg.renderMiniGuide(MODEL, UI);
+    click(buttonByText(s, '次へ'));
+    s.mg.renderMiniGuide({ ...MODEL, gen: gen(5) }, UI);
+    vi.advanceTimersByTime(MOVE_ACCEPT_DELAY_MS * 4);
+    click(buttonByText(s, '次へ'));
+    expect(moves(s)).toHaveLength(1);
+  });
+});
+
+describe('受け付けられなかった移動', () => {
+  const moves = (s: Setup): PageToBg[] => s.sent.filter((m) => m.type === 'GOTO');
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  it.each([
+    ['discarded', () => Promise.resolve({ status: 'discarded', reason: 'staleGen' })],
+    ['応答が拒否された', () => Promise.reject(new Error('no receiver'))],
+    ['応答の形が違う', () => Promise.resolve({ unexpected: true })],
+    ['応答が無い', () => Promise.resolve(undefined)],
+  ])('R-ADR73-06: 移動が受け付けられなかったとき（%s）は、新しい表示を待たずに次の移動を送れる', async (_name, respond) => {
+    const s = setup(true, () => 0, respond);
+    s.mg.renderMiniGuide(MODEL, UI);
+    click(buttonByText(s, '次へ'));
+    await settle();
+    click(buttonByText(s, '次へ'));
+    expect(moves(s)).toHaveLength(2);
+  });
+
+  it('R-ADR73-07: 移動が done で受け付けられたときは、新しい表示が届くまで次の移動を送らない', async () => {
+    const s = setup(true, () => 0);
+    s.mg.renderMiniGuide(MODEL, UI);
+    click(buttonByText(s, '次へ'));
+    await settle();
+    click(buttonByText(s, '次へ'));
+    expect(moves(s)).toHaveLength(1);
+  });
+
+  it('R-ADR73-08: 受け付けられなかった応答が、新しい表示の後に遅れて届いても、新しい表示の待ちは解かない', async () => {
+    const late: (() => void)[] = [];
+    const respond = (): Promise<unknown> =>
+      new Promise((resolve) => {
+        late.push(() => { resolve({ status: 'discarded', reason: 'staleGen' }); });
+      });
+    const clock = { t: 0 };
+    const s = setup(true, () => clock.t, respond);
+    s.mg.renderMiniGuide(MODEL, UI);
+    click(buttonByText(s, '次へ'));
+    s.mg.renderMiniGuide({ ...MODEL, gen: gen(5) }, UI);
+    clock.t += MOVE_ACCEPT_DELAY_MS;
+    click(buttonByText(s, '次へ'));
+    expect(moves(s)).toHaveLength(2);
+    late[0]?.();
+    await settle();
+    click(buttonByText(s, '次へ'));
+    expect(moves(s)).toHaveLength(2);
   });
 });
 

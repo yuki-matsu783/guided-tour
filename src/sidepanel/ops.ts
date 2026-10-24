@@ -19,10 +19,11 @@ import type {
 } from '../shared/messages/index.ts';
 import { request } from '../shared/permissions/index.ts';
 import type { PanelDeps } from './deps.ts';
+import { createMoveGate } from '../shared/move-gate/index.ts';
 import { describeResponse, permissionMissingText } from './response-text.ts';
 
 export interface OpsHost {
-  deps: Pick<PanelDeps, 'send' | 'permissions' | 'logger'>;
+  deps: Pick<PanelDeps, 'send' | 'permissions' | 'logger' | 'now'>;
   getView(): PanelView | null;
   /** 画面に出す結果の文言。null で消す。 */
   notify(text: string | null): void;
@@ -35,6 +36,8 @@ export interface OpsHost {
 }
 
 export interface Ops {
+  /** 表示（写し）が届いたときに呼ぶ。`gen` の変化で、移動の操作の受け付けの待ちをやり直す。 */
+  shown: (gen: Gen | null) => void;
   start: (entry: CatalogEntry, resume: boolean) => void;
   goto: (to: number) => void;
   pause: () => void;
@@ -57,6 +60,7 @@ export interface Ops {
 
 export function createOps(host: OpsHost): Ops {
   const { deps } = host;
+  const gate = createMoveGate(() => deps.now());
 
   /** 送って応答を検証し、文言を出す。送れない・読めないときは null。 */
   const dispatch = async (message: PanelToBg): Promise<OpResponse | null> => {
@@ -133,11 +137,20 @@ export function createOps(host: OpsHost): Ops {
         void dispatch({ type: 'START', tourId: entry.id, resume, opId: newOpId() });
       });
     },
+    shown(gen) {
+      gate.shown(gen);
+    },
     goto(to) {
+      // 新しい表示（PanelView の gen の変化）が届くまで、また届いてから 500 ミリ秒の間は、移動を送らない
+      if (!gate.tryMove()) return;
       const view = host.getView();
       const total = view?.steps.length ?? 0;
       const tourName = view?.tour?.name ?? null;
+      const sentGen = view?.gen ?? null;
       void withGen((ids) => ({ type: 'GOTO', to, ...ids, opId: newOpId() })).then((response) => {
+        // 受け付けられなかった移動は、新しい表示が来ないので、次の移動を許す
+        // 応答が遅れて、すでに新しい表示になっているときは、新しい表示の待ちを解かない
+        if (response?.status !== 'done' && host.getView()?.gen === sentGen) gate.release();
         if (response?.status === 'done' && to === total) host.finished('complete', tourName);
       });
     },

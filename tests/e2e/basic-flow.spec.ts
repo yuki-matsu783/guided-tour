@@ -226,6 +226,8 @@ test('E-06: 要素が無い状態でステップに入ると 8 秒以内に文�
   ]);
   await importTour(panel, tour);
   await beginTour(panel, tour.name, tab);
+  // 8 秒の時計は、ページが描画指示を受け取ってから動く。サイドパネルの操作からではなく、ミニガイドが現れてから測る
+  await expectMiniGuideStep(ui, '1/2');
   let enteredAt = Date.now();
 
   // 8 秒以内に、文章だけの案内（ハイライトは無い）へ切り替わる
@@ -240,6 +242,7 @@ test('E-06: 要素が無い状態でステップに入ると 8 秒以内に文�
   await expectPanelStep(panel, '2/2');
   await panel.prev();
   await expectPanelStep(panel, '1/2');
+  await expectMiniGuideStep(ui, '1/2');
   enteredAt = Date.now();
   await expect
     .poll(async () => (await ui.miniGuide())?.fallback ?? '', { timeout: 8500, intervals: [250] })

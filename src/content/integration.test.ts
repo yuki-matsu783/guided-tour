@@ -34,7 +34,7 @@ function build() {
   });
   const miniGuide = createMiniGuide({
     doc: document,
-    send: () => undefined,
+    send: () => Promise.resolve({ status: 'done' }),
     attachShadow,
     viewport,
     isTrusted: () => true,

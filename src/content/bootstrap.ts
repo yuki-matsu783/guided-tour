@@ -46,6 +46,14 @@ export function startContent(deps: BootstrapDeps): boolean {
       // 受け手がいなくてもページ側は止めない
     }
   };
+  /** 応答を返す送信。失敗は握りつぶし、応答が無いものとして null を返す。 */
+  const sendForResponse = (message: PageToBg): Promise<unknown> => {
+    try {
+      return Promise.resolve(runtime.sendMessage(message)).catch(() => null);
+    } catch {
+      return Promise.resolve(null);
+    }
+  };
   if (Reflect.get(win, MARK_KEY) === true) {
     sendRaw({ type: 'HELLO' } satisfies PageToBg);
     return false;
@@ -67,7 +75,7 @@ export function startContent(deps: BootstrapDeps): boolean {
     getSessionId: () => current?.getSessionId() ?? null,
     viewport: () => env.viewport(),
   });
-  const miniGuide = createMiniGuide({ doc, send, viewport: () => env.viewport() });
+  const miniGuide = createMiniGuide({ doc, send: sendForResponse, viewport: () => env.viewport() });
   const stepRuntime = createRuntime({
     doc,
     env,

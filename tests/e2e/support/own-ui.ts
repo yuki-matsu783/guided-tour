@@ -12,6 +12,7 @@
  * - `ui.miniGuide()`: ミニガイドの状態（無ければ null）。`state`（expanded / bar）・`mode`・`width`・`step`（n/N）・`title`・`hint`・`buttons`。
  * - `ui.overlay()`: ハイライトと吹き出し（無ければ null）。`frame`（枠の矩形）・`bubble`（文言・矩形）・`restoreVisible`。
  * - `ui.click(selector)` / `ui.clickButton('次へ')`: 要素の中心を実際のマウスでクリックする。
+ *   移動のボタン（戻る・次へ・完了）は、新しい表示から 500 ミリ秒は受け付けられないので、ステップの表示が変わるまで押し直す。
  * - `rapidClick(page, x, y, count)`（単独の関数）: 同じ座標を `count` 回、実際のマウスで間を置かずに押す。CDP の入力イベントを
  *   待たずに続けて送る（`mouse.click` を並べるより速く、負荷が高くても間隔が開かない）。「連打」の確認用。
  * - `ui.hover(selector)` / `ui.moveAway()`: ポインターを要素の上へ・ページの左上へ動かす。
@@ -19,6 +20,7 @@
  * - `ui.focused()`: Shadow DOM の中でフォーカスのある要素（無ければ null）。`label`（ボタンの文字か aria-label）・`focusVisible`・`outlineWidth`。
  * - `ui.tabTo(label)`: Tab キーを押して、`label`（文字列は完全一致、正規表現も可）の要素にフォーカスが来るまで進む（実際のキー入力。上限 40 回）。
  */
+import { expect } from '@playwright/test';
 import type { CDPSession, Page } from '@playwright/test';
 import { z } from 'zod';
 
@@ -185,6 +187,9 @@ function centerOf(rect: UiRect): { x: number; y: number } {
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
 }
 
+/** 移動の操作のボタン。 */
+const MOVE_LABELS: ReadonlySet<string> = new Set(['戻る', '次へ', '完了']);
+
 export function ownUi(page: Page): OwnUi {
   let cdp: CDPSession | null = null;
 
@@ -327,10 +332,26 @@ export function ownUi(page: Page): OwnUi {
     },
 
     async clickButton(label) {
-      const found = (await nodes('button')).find((b) => b.visible && !b.disabled && b.text.trim() === label);
-      if (found === undefined) throw new Error(`ページ上の表示に、押せるボタンが無い: ${label}`);
-      const target = centerOf(found.rect);
-      await page.mouse.click(target.x, target.y);
+      const press = async (): Promise<void> => {
+        const found = (await nodes('button')).find((b) => b.visible && !b.disabled && b.text.trim() === label);
+        if (found === undefined) throw new Error(`ページ上の表示に、押せるボタンが無い: ${label}`);
+        const target = centerOf(found.rect);
+        await page.mouse.click(target.x, target.y);
+      };
+      if (!MOVE_LABELS.has(label)) {
+        await press();
+        return;
+      }
+      // 新しい表示から 500 ミリ秒は移動が受け付けられない。ステップの表示が変わる（完了なら消える）まで待ち、
+      // 変わらなければ押し直す（押し直しても、二重には移動しない）
+      const stepOf = async (): Promise<string | null> => (await this.miniGuide())?.step ?? null;
+      const before = await stepOf();
+      await expect(async () => {
+        // 前の押下の効果が遅れて届いたときは、押し直さない（押すボタンが無くなっていることもある）
+        if ((await stepOf()) !== before) return;
+        await press();
+        await expect.poll(stepOf, { timeout: 2000 }).not.toBe(before);
+      }).toPass({ timeout: 20_000 });
     },
 
     async hover(selector) {

@@ -5,8 +5,11 @@
  */
 import { act } from 'react';
 import { stringify } from 'yaml';
+import type { PanelView } from '../shared/messages/index.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { GenSchema } from '../shared/ids/index.ts';
 import { App } from './App.tsx';
+import { MOVE_ACCEPT_DELAY_MS } from '../shared/move-gate/index.ts';
 import type { FakeDeps } from './test-support.tsx';
 import {
   click,
@@ -61,6 +64,22 @@ async function openRunning(view = runningView()): Promise<{ deps: FakeDeps; cont
   const { container } = await mount(<App deps={deps} />);
   await flush(10);
   return { deps, container };
+}
+
+/** 偽の時計を進める。 */
+function advanceClock(deps: FakeDeps, ms: number): void {
+  const base = deps.now();
+  deps.now = () => base + ms;
+}
+
+/** 新しい表示（gen が変わった写し）を届け、受け付けの待ちが過ぎるまで時計を進める。 */
+async function arriveNewView(deps: FakeDeps, view: PanelView): Promise<void> {
+  deps.state.view = view;
+  act(() => {
+    deps.emit({ type: 'TOUR_STATE_CHANGED', view });
+  });
+  await wait(150);
+  advanceClock(deps, MOVE_ACCEPT_DELAY_MS);
 }
 
 function lastOp(deps: FakeDeps, type: string): Record<string, unknown> | undefined {
@@ -189,6 +208,8 @@ describe('移動と操作', () => {
     await click(getButton(container, '次へ'));
     const next = lastOp(deps, 'GOTO');
     expect(next).toMatchObject({ to: 1, sessionId: 'session-1', gen: 3 });
+    // 移動の後は、新しい表示が届いて 500 ミリ秒たってから次の移動を受け付ける
+    await arriveNewView(deps, runningView({ stepIndex: 1, tabStatus: null, gen: GenSchema.parse(4) }));
     await click(getButton(container, '3. 最後のステップ'));
     const jump = lastOp(deps, 'GOTO');
     expect(jump).toMatchObject({ to: 2 });
@@ -321,8 +342,78 @@ describe('古い操作', () => {
       deps.emit({ type: 'TOUR_STATE_CHANGED', view: { ...next, gen: 7 } });
     });
     await wait(150);
+    advanceClock(deps, MOVE_ACCEPT_DELAY_MS);
     await click(getButton(container, '次へ'));
     expect(lastOp(deps, 'GOTO')).toMatchObject({ gen: 7, to: 2 });
     vi.clearAllMocks();
+  });
+});
+
+describe('移動の直後の操作の受け付け', () => {
+  const gotos = (deps: FakeDeps): number => deps.sent.filter((m) => m.type === 'GOTO').length;
+
+  it('R-ADR73-11: 移動を送った後は、新しい表示（gen の変化）が届くまで、次の移動を送らない', async () => {
+    const { deps, container } = await openRunning();
+    await click(getButton(container, '次へ'));
+    advanceClock(deps, 10_000);
+    await click(getButton(container, '次へ'));
+    await click(getButton(container, '戻る'));
+    await click(getButton(container, '3. 最後のステップ'));
+    expect(gotos(deps)).toBe(1);
+    // gen が同じ写しが届いても、新しい表示にならない
+    await arriveNewView(deps, runningView({ stepIndex: 1, tabStatus: null }));
+    await click(getButton(container, '次へ'));
+    expect(gotos(deps)).toBe(1);
+  });
+
+  it('R-ADR73-12: 新しい表示から499ミリ秒は移動を送らず、500ミリ秒で送る（次へ・戻る・一覧）', async () => {
+    const { deps, container } = await openRunning();
+    await click(getButton(container, '次へ'));
+    deps.state.view = runningView({ stepIndex: 1, tabStatus: null, gen: GenSchema.parse(4) });
+    act(() => {
+      deps.emit({ type: 'TOUR_STATE_CHANGED', view: deps.state.view });
+    });
+    await wait(150);
+    advanceClock(deps, MOVE_ACCEPT_DELAY_MS - 1);
+    await click(getButton(container, '次へ'));
+    await click(getButton(container, '戻る'));
+    await click(getButton(container, '3. 最後のステップ'));
+    expect(gotos(deps)).toBe(1);
+    advanceClock(deps, MOVE_ACCEPT_DELAY_MS);
+    await click(getButton(container, '戻る'));
+    expect(gotos(deps)).toBe(2);
+    expect(lastOp(deps, 'GOTO')).toMatchObject({ to: 0, gen: 4 });
+  });
+
+  it('R-ADR73-13: 完了も同じ規則で、待ちの間は送らない', async () => {
+    const { deps, container } = await openRunning(runningView({ stepIndex: 1 }));
+    await click(getButton(container, '次へ'));
+    await arriveNewView(deps, runningView({ stepIndex: 2, tabStatus: null, gen: GenSchema.parse(4) }));
+    // 到着直後に戻した時計で、待ちの途中を作る
+    const base = deps.now();
+    deps.now = () => base - 1;
+    await click(getButton(container, '完了'));
+    expect(gotos(deps)).toBe(1);
+    deps.now = () => base;
+    await click(getButton(container, '完了'));
+    expect(gotos(deps)).toBe(2);
+  });
+
+  it('R-ADR73-14: ほかの操作（再確認・中断）は、移動の待ちで止まらない', async () => {
+    const { deps, container } = await openRunning();
+    await click(getButton(container, '次へ'));
+    await arriveNewView(deps, runningView({ gen: GenSchema.parse(4) }));
+    deps.now = () => 0;
+    await click(getButton(container, '再確認'));
+    await click(getButton(container, '一時中断'));
+    expect(deps.sent.map((m) => m.type).filter((t) => t !== 'GET_STATE')).toEqual(['GOTO', 'RECHECK', 'PAUSE']);
+  });
+
+  it('R-ADR73-15: 移動が受け付けられなかったとき（古い表示など）は、新しい表示を待たずに次の移動を送れる', async () => {
+    const { deps, container } = await openRunning();
+    deps.respond = () => ({ status: 'discarded', reason: 'staleGen' });
+    await click(getButton(container, '次へ'));
+    await click(getButton(container, '次へ'));
+    expect(gotos(deps)).toBe(2);
   });
 });

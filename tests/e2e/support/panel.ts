@@ -12,6 +12,8 @@
  * - `panel.importFiles(files)`: 取り込み（`input[type=file]` に `setInputFiles`）。`panel.importResults()` が結果の領域。
  * - `panel.dropFiles(files)`: `data-testid="dropzone"` へドロップして取り込む。
  * - `panel.next()` / `prev()` / `finish()` / `gotoStep(n)`: 実行中の画面の移動（`gotoStep` は 1 始まりの番号）。
+ *   新しい表示から 500 ミリ秒は移動の操作が受け付けられないので、押してステップの表示（n/N）か完了の表示が
+ *   変わるまで待ち、変わらなければ押し直す（押し直しても、二重には移動しない）。
  * - `panel.pause()` / `stop()` / `resumePaused()` / `restartPaused()`: 一時中断・終了・再開・最初からやり直し。
  * - `panel.useTab(pattern?)` / `openHere()` / `openNew()` / `focusRole()` / `recheck()`: タブの操作。`useTab` は「〜として使う」の先頭（`pattern` で選べる）。
  *   既存タブの一覧は、役割のタブが無い間はタブの作成・移動・閉鎖で自動で更新される。`recheck()`（再確認）で取り直すこともできる。
@@ -92,6 +94,20 @@ export async function openPanel(ext: Extension): Promise<SidePanel> {
   const click = async (name: string | RegExp): Promise<void> => {
     await press(button(name));
   };
+  const stepText = async (): Promise<string | null> => {
+    const badge = page.locator('.screen-header [aria-label$="ステップ"]');
+    return (await badge.count()) === 0 ? null : badge.first().textContent();
+  };
+  /** 移動の操作。ステップの表示が変わる（完了なら表示が消える）まで待ち、変わらなければ押し直す。 */
+  const move = async (act: () => Promise<void>): Promise<void> => {
+    const before = await stepText();
+    await expect(async () => {
+      // 前の押下の効果が遅れて届いたときは、押し直さない（押すボタンが無くなっていることもある）
+      if ((await stepText()) !== before) return;
+      await act();
+      await expect.poll(stepText, { timeout: 2000 }).not.toBe(before);
+    }).toPass({ timeout: 20_000 });
+  };
   const card = (name: string | RegExp): Locator =>
     page.locator('li.tour-card').filter({ has: page.getByRole('heading', { level: 3, name }) });
   const setFiles = async (files: ImportFile[]): Promise<void> => {
@@ -119,11 +135,11 @@ export async function openPanel(ext: Extension): Promise<SidePanel> {
       await page.getByTestId('dropzone').dispatchEvent('drop', { dataTransfer });
     },
     importResults: () => page.getByRole('status', { name: '取り込みの結果' }),
-    next: () => click('次へ'),
-    prev: () => click('戻る'),
-    finish: () => click('完了'),
+    next: () => move(() => click('次へ')),
+    prev: () => move(() => click('戻る')),
+    finish: () => move(() => click('完了')),
     async gotoStep(oneBased) {
-      await press(page.getByRole('button', { name: new RegExp(`^${String(oneBased)}\\. `) }));
+      await move(() => press(page.getByRole('button', { name: new RegExp(`^${String(oneBased)}\\. `) })));
     },
     pause: () => click('一時中断'),
     stop: () => click('終了'),

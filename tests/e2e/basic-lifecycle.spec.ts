@@ -265,12 +265,17 @@ test('E-26: マウスを使わず、キーボードだけで主な操作をす�
   await expectMiniGuideStep(ui, '1/4');
 
   // ステップ移動（次へ・戻る・ステップ一覧）
-  await activate(page.getByRole('button', { name: '次へ', exact: true }));
-  await expectPanelStep(panel, '2/4');
-  await activate(page.getByRole('button', { name: '戻る', exact: true }));
-  await expectPanelStep(panel, '1/4');
-  await activate(page.getByRole('button', { name: /^3\. / }), 'Space');
-  await expectPanelStep(panel, '3/4');
+  // 新しい表示から 500 ミリ秒は移動が受け付けられないので、ステップの表示が変わるまで押し直す
+  const activateMove = async (target: ReturnType<Page['locator']>, step: string, key = 'Enter'): Promise<void> => {
+    await expect(async () => {
+      if ((await panel.stepBadge().textContent()) === step) return;
+      await activate(target, key);
+      await expectPanelStep(panel, step);
+    }).toPass({ timeout: 20_000 });
+  };
+  await activateMove(page.getByRole('button', { name: '次へ', exact: true }), '2/4');
+  await activateMove(page.getByRole('button', { name: '戻る', exact: true }), '1/4');
+  await activateMove(page.getByRole('button', { name: /^3\. / }), '3/4', 'Space');
 
   // 表示の切り替え
   await activate(page.getByRole('button', { name: '表示を消す' }));
@@ -292,12 +297,17 @@ test('E-26: マウスを使わず、キーボードだけで主な操作をす�
   await expect.poll(async () => (await ui.miniGuide())?.width).toBe(before + 16);
   await tab.keyboard.press('ArrowRight');
   await expect.poll(async () => (await ui.miniGuide())?.width).toBe(before);
-  await focus('戻る');
-  await tab.keyboard.press('Enter');
-  await expectPanelStep(panel, '2/4');
-  await focus('次へ');
-  await tab.keyboard.press('Enter');
-  await expectPanelStep(panel, '3/4');
+  // ここも移動のボタン。新しい表示から 500 ミリ秒は受け付けられないので、ステップの表示が変わるまで押し直す
+  const pressMove = async (label: string, step: string): Promise<void> => {
+    await expect(async () => {
+      if ((await panel.stepBadge().textContent()) === step) return;
+      await focus(label);
+      await tab.keyboard.press('Enter');
+      await expectPanelStep(panel, step);
+    }).toPass({ timeout: 20_000 });
+  };
+  await pressMove('戻る', '2/4');
+  await pressMove('次へ', '3/4');
   await focus('最小化');
   await tab.keyboard.press('Enter');
   await expect.poll(async () => (await ui.miniGuide())?.state).toBe('bar');
