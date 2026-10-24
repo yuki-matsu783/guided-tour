@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-このファイルには、開発で常に守ることだけを書く。詳細は `docs/claude/`（ccnavi の開発）に記載。
+このファイルには、開発で常に守ることだけを書く。詳細は `docs/claude/` に記載。
 
 ## 応答ルール
 
@@ -17,3 +17,9 @@
 
 ## 詳細
 
+| 文書 | 内容 |
+|---|---|
+| [docs/requirements.md](docs/requirements.md) | 要件仕様書。外から観測できる振る舞い |
+| [docs/design.md](docs/design.md) | 設計書。内部構造と実装方式 |
+| [docs/claude/docs-writing.md](docs/claude/docs-writing.md) | 要件書・設計書・ADR の書き分け、ADR の扱い、frontmatter |
+| [docs/claude/ccnavi/README.md](docs/claude/ccnavi/README.md) | 別プロジェクト ccnavi から持ち込んだルール。そのままでは適用しない |

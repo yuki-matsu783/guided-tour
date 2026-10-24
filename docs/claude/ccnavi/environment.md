@@ -1,12 +1,12 @@
 ---
 type: guide
-title: 実行環境とADRの扱い
-description: ccnaviの開発で対応する実行環境（Windows、macOS、Linux）と、sh・Pythonを書くときの決まり、実測で分かった環境固有の落とし穴、文書やコメントでのADRへの触れ方
+title: 実行環境
+description: ccnaviの開発で対応する実行環境（Windows、macOS、Linux）と、sh・Pythonを書くときの決まり、実測で分かった環境固有の落とし穴、
 tags: [sh-scripts, environment]
-keywords: [落とし穴, uv, jq, CP932, Docker, PyInstaller, gitdir, 大文字小文字, casefold, normcase, pathcase, 実行環境, 環境, Windows, macOS, Linux, Git Bash, WSL, sh, bash, BSD, ADR, ADR番号, コメント]
+keywords: [落とし穴, uv, jq, CP932, Docker, PyInstaller, gitdir, 大文字小文字, casefold, normcase, pathcase, 実行環境, 環境, Windows, macOS, Linux, Git Bash, WSL, sh, bash, BSD]
 ---
 
-# 実行環境とADRの扱い
+# 実行環境
 
 ## 実行環境
 
@@ -63,11 +63,3 @@ Claude Codeの振る舞いについて測った前提は設計書の付録C（[a
 - 例外は、git が追跡する綴りに依る名前。状態のディレクトリ（`todo` `doing` `review` `done`）は綴りまで求め、
   違う綴りは読まずに警告する。ブランチ名は git が区別するので、そのまま比べる。`.gitignore`の`/scratchpad`も git が
   区別する。例外を足すときはこの節に書く（`wip/`の置き場は例外ではない。区別しない）
-
-## 文書とコメントでのADRの扱い
-
-- 文書・コメント・ユーザに見える文言（print、拒否文、`rules.yml`の`message`、lintの文言）では、ADR番号で言及しない。
-  決めた中身と理由をその場で書く。読み手がADRを開かなくても、なぜそうなっているかが分かるようにする
-- ADRの中の節番号や決定の記号（`D11`、`段階 2c`など）も同じ扱いにする
-- 番号を使うのは、ADR同士の置き換え関係を書くとき（`docs/adr/`の中で「ADR-NNNNの置き場を置き換える」と書くなど）だけ
-- 番号だけでは、読み手はADRを開くまで意味が分からない。ADRが後で改められても、番号を引いた側との食い違いに気づけない
