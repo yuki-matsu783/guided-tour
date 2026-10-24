@@ -61,7 +61,7 @@ flowchart LR
 | `pageSeq` | ページ世代（単調に増える） | 役割のタブで、新しい文書の読み込み、または同じ文書内の URL 変更（SPA）を検知したとき | 報告の `pageSeq` が現在と違えば捨てる |
 | `rev` | 描画の版（storage.session に保存し、実行回をまたいで単調に増える） | ページ側への指示を送るたび | ページ側は、受け取った最大の `rev` より小さい指示（RENDER・CLEAR・RECHECK など）を捨てる |
 | `opId` | 操作の ID | 操作のたび | 同じ操作が重複して届いても、1回だけ処理する |
-| `sender` | Chrome が付ける送信元（`tab.id`・`frameId`・`documentId`・`url`） | - | 本文の自己申告ではなく、これで送信元を確かめる |
+| `sender` | Chrome が付ける送信元（`tab.id`・`frameId`・`documentId`・`url`） | - | 本文の自己申告ではなく、これで送信元を確かめる。ただし `url` は同じ文書内の URL 変更（`pushState`）に追従しないため、ページの現在の URL の判定には使わず、`chrome.tabs` で取得したタブの URL を使う |
 
 操作ごとの受け付け条件は次のとおりです。
 
