@@ -18,7 +18,7 @@ import { displayName } from './entry-name.ts';
 import { imageKindOfExtension, inspectImage } from './image.ts';
 import type { ImageInfo } from './image.ts';
 import { formatBytesLimit, PACKAGE_LIMITS } from './limits.ts';
-import { extractMarkdownImages } from './md-images.ts';
+import { decodeImagePath, extractMarkdownImages } from './md-images.ts';
 import { extensionOf, resolveRelative } from './path.ts';
 
 /** `tour.yaml` の、パッケージ内の名前。 */
@@ -88,14 +88,6 @@ function decodeUtf8(bytes: Uint8Array): string | null {
   }
 }
 
-function decodeRef(src: string): string | null {
-  try {
-    return decodeURIComponent(src);
-  } catch {
-    return null;
-  }
-}
-
 export function validatePackage(input: PackageInput): PackageResult {
   const { entries, yamlText } = input;
   const yamlLabel = entries === null ? input.fileName : `${input.fileName}/${TOUR_FILE}`;
@@ -157,7 +149,7 @@ export function validatePackage(input: PackageInput): PackageResult {
       }
       return { kind: 'data' };
     }
-    const ref = decode ? decodeRef(src) : src;
+    const ref = decode ? decodeImagePath(src) : src;
     if (ref === null) {
       report(where, '画像のパスを読み取れません（パーセントエンコードが正しくありません）');
       return { kind: 'error' };

@@ -3,6 +3,7 @@
  * renderInline のテスト。強調・インラインコードだけを扱い、HTML は文字列のまま表示する。
  */
 import { describe, expect, it, vi } from 'vitest';
+import { PACKAGE_LIMITS } from '../package/limits';
 import { renderInline } from './inline';
 
 function render(src: string): HTMLElement {
@@ -92,4 +93,72 @@ describe('renderInline', () => {
       adjacent.mockRestore();
     }
   });
+});
+
+describe('強調の解析の手間（最悪の入力）', () => {
+  const MAX_MS = 5000;
+  const repeatTo = (unit: string, bytes: number): string => unit.repeat(Math.floor(bytes / unit.length));
+  /** `tip` は YAML の中の文字列なので、YAML の上限に入る長さが最大。 */
+  const TIP_BYTES = PACKAGE_LIMITS.yamlBytes - 64;
+
+  it('R-FINAL-03: 区切りの手順どおりの結果になる（開きが見つからない閉じが手前にあっても、あとの対応を見落とさない）', () => {
+    expect(render('a* b *c d* e*').innerHTML).toBe('a* b <em>c d</em> e*');
+    expect(render('*a* b* c*').innerHTML).toBe('<em>a</em> b* c*');
+    expect(render('**a* b*').innerHTML).toBe('<em><em>a</em> b</em>');
+    expect(render('*a **b** c* d**').innerHTML).toBe('<em>a <strong>b</strong> c</em> d**');
+    expect(render('*foo**bar**baz*').innerHTML).toBe('<em>foo<strong>bar</strong>baz</em>');
+    expect(render('*foo**bar*').innerHTML).toBe('<em>foo**bar</em>');
+    expect(render('x ** y **z**').innerHTML).toBe('x ** y <strong>z</strong>');
+  });
+
+  it('R-FINAL-03: 3 の倍数の規則（*foo**bar*・**foo*bar*** など）が今までと同じ結果になる', () => {
+    expect(render('**foo*bar***').innerHTML).toBe('<strong>foo<em>bar</em></strong>');
+    expect(render('***a** b*').innerHTML).toBe('<em><strong>a</strong> b</em>');
+  });
+
+  it('R-FINAL-03: 強調の入れ子が深すぎるときは、深い側を要素にせず記号を文字列のまま残す（DOM の深さに上限がある）', () => {
+    const depthOf = (el: Element): number => {
+      let max = 0;
+      for (const child of Array.from(el.children)) max = Math.max(max, depthOf(child));
+      return max + 1;
+    };
+    const n = 500;
+    const c = render(`${'*a '.repeat(n)}${'a* '.repeat(n)}`);
+    expect(depthOf(c) - 1).toBeLessThanOrEqual(100);
+    // 記号を除いた文字列は変わらない
+    expect(c.textContent.replaceAll('*', '')).toBe(`${'a '.repeat(n)}${'a '.repeat(n)}`);
+    // 浅ければ今までどおり要素になる
+    expect(render('*a *b *c c* b* a*').querySelectorAll('em')).toHaveLength(3);
+  });
+
+  const cases: [string, string][] = [
+    ['`*a ` の連続（開きだけが並ぶ）', repeatTo('*a ', TIP_BYTES)],
+    ['`a* ` の連続（閉じだけが並ぶ）', repeatTo('a* ', TIP_BYTES)],
+    ['`**a *` の連続', repeatTo('**a *', TIP_BYTES)],
+    ['`*` だけの連続', repeatTo('*', TIP_BYTES)],
+    ['開きが前半・閉じが後半に並ぶ（入れ子）', `${repeatTo('*a ', TIP_BYTES / 2)}${repeatTo('a* ', TIP_BYTES / 2)}`],
+    ['3 の倍数の規則で対応しない組が並ぶ', `${repeatTo('***a ', TIP_BYTES / 2)}${repeatTo('a* ', TIP_BYTES / 2)}`],
+  ];
+  it.each(cases)(
+    'R-FINAL-03 R-FINAL-04: tip が YAML の上限いっぱいの長さ（%s）でも、5 秒以内に描画できる',
+    (_name, src) => {
+      expect(src.length).toBeLessThanOrEqual(PACKAGE_LIMITS.yamlBytes);
+      const started = performance.now();
+      render(src);
+      expect(performance.now() - started).toBeLessThan(MAX_MS);
+    },
+    30_000,
+  );
+
+  it(
+    'R-FINAL-03 R-FINAL-04: 対応する強調が大量に並ぶ入力（256 KB）も、5 秒以内に描画できる',
+    () => {
+      const src = repeatTo('*a* ', 256 * 1024);
+      const started = performance.now();
+      const c = render(src);
+      expect(performance.now() - started).toBeLessThan(MAX_MS);
+      expect(c.querySelectorAll('em').length).toBe(src.length / 4);
+    },
+    30_000,
+  );
 });

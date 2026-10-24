@@ -125,6 +125,10 @@ const IMAGE_MARKDOWN = [
   '',
   '![動く例](../images/sub/anim.gif)',
   '',
+  '![日本語の例](../images/画像.png)',
+  '',
+  '![空白の例](../images/a%20b.png)',
+  '',
 ].join('\n');
 
 async function imageSizes(page: Page, selector: string): Promise<{ alt: string; complete: boolean; width: number; height: number }[]> {
@@ -151,6 +155,8 @@ test('E-35: Markdown とサブディレクトリの画像（GIF を含む）を�
     'steps/01.md': IMAGE_MARKDOWN,
     'images/shot.png': pngImage(37, 23),
     'images/sub/anim.gif': gifImage(21, 13),
+    'images/画像.png': pngImage(41, 19),
+    'images/a b.png': pngImage(29, 17),
   });
   await importTour(panel, zip);
   await expect(panel.card(tour.name)).toBeVisible();
@@ -175,10 +181,13 @@ test('E-35: Markdown とサブディレクトリの画像（GIF を含む）を�
   // 画像の読み込みの完了と寸法
   await expect
     .poll(async () => (await imageSizes(panel2.page, '.step-body .markdown img')).filter((i) => i.complete && i.width > 0).length)
-    .toBe(2);
+    .toBe(4);
   const inBody = await imageSizes(panel2.page, '.step-body .markdown img');
   expect(inBody).toContainEqual({ alt: '画面の例', complete: true, width: 37, height: 23 });
   expect(inBody).toContainEqual({ alt: '動く例', complete: true, width: 21, height: 13 });
+  // 日本語やスペースを含むファイル名の画像も表示される
+  expect(inBody).toContainEqual({ alt: '日本語の例', complete: true, width: 41, height: 19 });
+  expect(inBody).toContainEqual({ alt: '空白の例', complete: true, width: 29, height: 17 });
   // 補足画像（GIF）と図の説明
   await expect
     .poll(async () => (await imageSizes(panel2.page, '.step-body figure.media img')).map((i) => `${String(i.width)}x${String(i.height)}`))

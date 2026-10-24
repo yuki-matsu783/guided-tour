@@ -2,7 +2,9 @@ import { stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { CompiledTourSchema } from './schema.ts';
 import { parseTour } from './parse.ts';
+import { matchUrl } from './url.ts';
 import type { Issue } from './parse.ts';
+import { PACKAGE_LIMITS } from '../package/limits.ts';
 
 const ORIGIN = 'https://example.com';
 const FILE = 'my-tour.yaml';
@@ -869,5 +871,135 @@ describe('Object.prototype の名前の役割（横展開）', () => {
 
   it('R-SWEEP-02: 役割名が普通の名前なら、これまでどおり通る', () => {
     expect(run(tourObj({ tabs: { admin: { label: '管理' } } })).ok).toBe(true);
+  });
+});
+
+describe('最終レビューの指摘の修正（YAML の手間・URL 条件のパス）', () => {
+  const HEAD = ['schemaVersion: 3', 'id: t', 'name: n', 'origins: [https://example.com]'];
+  const STEP_LINES = ['steps:', '  - id: a', '    title: A', '    url: {origin: "https://example.com"}'];
+  const MAX_MS = 5000;
+
+  /** 上限ちょうど（バイト数）まで、`k<i>: 1` のキーを最上位に並べた YAML。 */
+  const fullOfKeys = (tail: string): string => {
+    const head = `${[...HEAD, ...STEP_LINES].join('\n')}\n`;
+    const parts: string[] = [head];
+    let size = head.length + tail.length;
+    for (let i = 0; ; i++) {
+      const line = `k${String(i)}: 1\n`;
+      if (size + line.length > PACKAGE_LIMITS.yamlBytes) break;
+      parts.push(line);
+      size += line.length;
+    }
+    return parts.join('') + tail;
+  };
+
+  it('R-FINAL-01: 重複キーの検査は、同じ階層の最上位・入れ子・フローマップ・アンカー付きキーのどれでも捕まえる', () => {
+    const cases: { name: string; lines: string[]; line: number }[] = [
+      { name: '最上位', lines: [...HEAD, 'name: b', ...STEP_LINES], line: 5 },
+      { name: '1 と "1"', lines: [...HEAD, 'tabs:', '  "1": {}', '  1: {}', ...STEP_LINES], line: 7 },
+      { name: 'アンカー付きキー', lines: [...HEAD, 'tabs:', '  &x main: {}', '  main: {}', ...STEP_LINES], line: 7 },
+      { name: 'フローマップ', lines: [...HEAD, 'tabs: {main: {}, main: {}}', ...STEP_LINES], line: 5 },
+      { name: '入れ子の対応表', lines: [...HEAD, ...STEP_LINES, '    target:', '      role: button', '      role: link'], line: 11 },
+    ];
+    for (const c of cases) {
+      const r = parseTour(c.lines.join('\n'), FILE);
+      expect(r.ok, c.name).toBe(false);
+      const dup = errorsOf(r).filter((e) => e.message.includes('重複'));
+      expect(dup, c.name).toHaveLength(1);
+      expect(dup[0]?.line, c.name).toBe(c.line);
+    }
+  });
+
+  it('R-FINAL-01: 別々の対応表に同じキーがあっても重複にならない', () => {
+    const r = yamlRun(...HEAD, 'tabs:', '  a: {label: A}', '  b: {label: B}', ...STEP_LINES);
+    expect(messagesOf(r).some((m) => m.includes('重複'))).toBe(false);
+  });
+
+  it(
+    'R-FINAL-01 R-FINAL-04: 上限ちょうどの YAML にキーが並んでいても、5 秒以内に終わる（キー数に比例した手間）',
+    () => {
+      const text = fullOfKeys('');
+      expect(text.length).toBeLessThanOrEqual(PACKAGE_LIMITS.yamlBytes);
+      expect(text.length).toBeGreaterThan(PACKAGE_LIMITS.yamlBytes - 20);
+      const started = performance.now();
+      const r = parseTour(text, FILE);
+      expect(performance.now() - started).toBeLessThan(MAX_MS);
+      expect(r.ok).toBe(false);
+      expect(errorsOf(r).length).toBeLessThanOrEqual(20);
+    },
+    30_000,
+  );
+
+  it(
+    'R-FINAL-01 R-FINAL-04: 上限ちょうどのキーの最後で重複していても、5 秒以内に重複の行番号つきで返る',
+    () => {
+      const text = `${fullOfKeys('')}k0: 2\n`;
+      const started = performance.now();
+      const r = parseTour(text, FILE);
+      expect(performance.now() - started).toBeLessThan(MAX_MS);
+      expect(r.ok).toBe(false);
+      const dup = errorsOf(r).filter((e) => e.message.includes('重複'));
+      expect(dup).toHaveLength(1);
+      expect(dup[0]?.line).toBe(text.split('\n').length - 1);
+    },
+    30_000,
+  );
+
+  describe('URL 条件のパスの正規化', () => {
+    const condOf = (url: Obj) => {
+      const r = run(tourObj({ steps: [pageStep({ url })] }));
+      if (!r.ok) throw new Error(`解析に失敗: ${errorsOf(r).map((e) => e.message).join(' / ')}`);
+      const cond = r.tour.steps[0]?.url;
+      if (cond === undefined) throw new Error('url がない');
+      return cond;
+    };
+    const pathOf = (url: Obj) => condOf(url).path;
+
+    it('R-FINAL-06: 日本語のパス（exact・prefix・glob）は、ブラウザと同じパーセントエンコードの形にそろう', () => {
+      const enc = encodeURIComponent('設定');
+      expect(pathOf({ origin: ORIGIN, path: { exact: '/設定' } })).toEqual({ exact: `/${enc}` });
+      expect(pathOf({ origin: ORIGIN, path: { prefix: '/設定/詳細' } })).toEqual({ prefix: `/${enc}/${encodeURIComponent('詳細')}` });
+      expect(pathOf({ origin: ORIGIN, path: { glob: '/設定/*/**' } })).toEqual({ glob: `/${enc}/*/**` });
+    });
+
+    it('R-FINAL-06: スペース・`#` を含む区間もブラウザの形になり、エンコード済みの区間・ASCII の区間は変わらない', () => {
+      expect(pathOf({ origin: ORIGIN, path: { exact: '/a b' } })).toEqual({ exact: '/a%20b' });
+      expect(pathOf({ origin: ORIGIN, path: { exact: '/a#b' } })).toEqual({ exact: '/a%23b' });
+      expect(pathOf({ origin: ORIGIN, path: { exact: '/a%20b/%E8%A8%AD' } })).toEqual({ exact: '/a%20b/%E8%A8%AD' });
+      expect(pathOf({ origin: ORIGIN, path: { prefix: '/Admin/users_1' } })).toEqual({ prefix: '/Admin/users_1' });
+      expect(pathOf({ origin: ORIGIN, path: { exact: '/' } })).toEqual({ exact: '/' });
+    });
+
+    it('R-FINAL-06: そろえた条件は、ブラウザがエンコードした URL と一致する（照合の側は変えない）', () => {
+      const cond = condOf({ origin: ORIGIN, path: { exact: '/設定' } });
+      expect(matchUrl(cond, new URL(`${ORIGIN}/設定`).href)).toBe(true);
+      expect(matchUrl(cond, `${ORIGIN}/${encodeURIComponent('設定')}`)).toBe(true);
+      expect(matchUrl(cond, `${ORIGIN}/other`)).toBe(false);
+    });
+
+    it('R-FINAL-06: tabs の url と done の url のパスもそろう', () => {
+      const r = run(
+        tourObj({
+          tabs: { main: { label: 'メイン', url: { origin: ORIGIN, path: { exact: '/設定' } } } },
+          steps: [pageStep({ done: { type: 'page', url: { origin: ORIGIN, path: { prefix: '/完了' } } } })],
+        }),
+      );
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.tour.tabs?.main?.url?.path).toEqual({ exact: `/${encodeURIComponent('設定')}` });
+      expect(r.tour.steps[0]?.done?.url?.path).toEqual({ prefix: `/${encodeURIComponent('完了')}` });
+    });
+
+    it('R-FINAL-06: そろえた後のツアーを検証し直しても通り、結果は変わらない（200文字の日本語のパスも通る）', () => {
+      const long = `/${'あ'.repeat(199)}`;
+      const r = run(tourObj({ steps: [pageStep({ url: { origin: ORIGIN, path: { exact: long } } })] }));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      const again = CompiledTourSchema.safeParse(r.tour);
+      expect(again.success).toBe(true);
+      expect(again.success ? again.data : null).toEqual(r.tour);
+      const over = run(tourObj({ steps: [pageStep({ url: { origin: ORIGIN, path: { exact: `${long}あ` } } })] }));
+      expect(over.ok).toBe(false);
+    });
   });
 });

@@ -2,10 +2,11 @@
  * 説明文の Markdown を、`renderMarkdown` で ref の要素に描く。
  * 画像の参照は、参照元ファイルの場所を起点に解決し、画像の URL 管理から表示できる URL を得てから描く
  * （得られなかったものは代替文になる）。画像が無ければすぐに描く。
+ * 画像のパスは、取り込み・`renderMarkdown` と同じ形（decodeURIComponent したパス）で扱う。日本語やスペースを含む名前もこの形で一致する。
  */
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { extractMarkdownImages, isDataUrl, resolveRelative } from '../../core/package/index.ts';
+import { decodeImagePath, extractMarkdownImages, isDataUrl, resolveRelative } from '../../core/package/index.ts';
 import { renderMarkdown } from '../../core/markdown/index.ts';
 import type { Assets } from '../assets/index.ts';
 
@@ -34,7 +35,14 @@ export function Markdown(props: MarkdownProps): ReactNode {
       if (!cancelled) renderMarkdown(text, container, (src) => urls.get(src) ?? null, hosts);
     };
 
-    const sources = [...new Set(extractMarkdownImages(text).map((image) => image.src))];
+    // 戻せないパス（不正な %）は表の鍵にしない。`renderMarkdown` も戻せずに代替文を出す
+    const sources = [
+      ...new Set(
+        extractMarkdownImages(text)
+          .map((image) => decodeImagePath(image.src))
+          .filter((path): path is string => path !== null),
+      ),
+    ];
     if (sources.length === 0) {
       draw(new Map());
     } else {

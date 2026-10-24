@@ -5,11 +5,18 @@
  * innerHTML 系は使わず、`createElement` と `createTextNode` だけで組み立てる。
  */
 
+/**
+ * 強調の入れ子の上限。超える強調は要素にせず、記号を文字列のまま残す（`*a *b *c ...` を並べた入力で DOM を深くしない）。
+ * markdown-it の入れ子の上限と同じ値にそろえる。
+ */
+const MAX_EMPHASIS_DEPTH = 100;
+
 /** 解析結果の木。区切り（`*` の連続）は、対応が決まるまで delim として持つ。 */
 type InlineNode =
   | { readonly kind: 'text'; readonly value: string }
   | { readonly kind: 'code'; readonly value: string }
-  | { readonly kind: 'el'; readonly tag: 'strong' | 'em'; readonly children: InlineNode[] }
+  | { readonly kind: 'el'; readonly tag: 'strong' | 'em'; readonly children: InlineNode[]; readonly depth: number }
+  | { readonly kind: 'group'; readonly children: InlineNode[]; readonly depth: number }
   | { kind: 'delim'; count: number; readonly original: number; readonly canOpen: boolean; readonly canClose: boolean };
 
 const WHITESPACE = /\s/u;
@@ -72,64 +79,174 @@ function tokenize(src: string): InlineNode[] {
   return nodes;
 }
 
+type Delim = Extract<InlineNode, { kind: 'delim' }>;
+
+/** 解析中の節点の並び（双方向の連結リスト）。強調で囲むときに、配列のように詰め直さずに済ませる。 */
+interface Cell {
+  node: InlineNode;
+  prev: Cell | null;
+  next: Cell | null;
+}
+
+/** 区切りだけの連結リスト。開きを探すときに、文字列やコードを飛ばして区切りだけを辿る。 */
+interface Entry {
+  readonly cell: Cell;
+  readonly delim: Delim;
+  /** 出現順の番号。探索の下限（`openersBottom`）の比較に使う（途中で消されても比べられる）。 */
+  readonly seq: number;
+  prev: Entry | null;
+  next: Entry | null;
+}
+
+/** 節点の中の強調の入れ子の深さ。 */
+function depthOf(n: InlineNode): number {
+  return n.kind === 'el' || n.kind === 'group' ? n.depth : 0;
+}
+
 /** 対応の決まらなかった区切りを文字列に戻す。 */
-function settle(nodes: readonly InlineNode[]): InlineNode[] {
-  return nodes.map((n) => (n.kind === 'delim' ? { kind: 'text', value: '*'.repeat(n.count) } : n));
+function settleNode(n: InlineNode): InlineNode {
+  return n.kind === 'delim' ? { kind: 'text', value: '*'.repeat(n.count) } : n;
 }
 
-/** 閉じの区切りに対応する開きを、手前から探す（3の倍数の規則を含む）。 */
-function findOpener(nodes: readonly InlineNode[], closerIndex: number, closer: Extract<InlineNode, { kind: 'delim' }>): number {
-  for (let j = closerIndex - 1; j >= 0; j -= 1) {
-    const o = nodes[j];
-    if (o?.kind !== 'delim' || !o.canOpen || o.count === 0) continue;
-    const bothSides = o.canClose || closer.canOpen;
-    if (bothSides && (o.original + closer.original) % 3 === 0 && !(o.original % 3 === 0 && closer.original % 3 === 0)) {
-      continue;
-    }
-    return j;
-  }
-  return -1;
+/** 開きとして使えるか（3の倍数の規則を含む）。 */
+function matches(opener: Delim, closer: Delim): boolean {
+  if (!opener.canOpen || opener.count === 0) return false;
+  const bothSides = opener.canClose || closer.canOpen;
+  return !(bothSides && (opener.original + closer.original) % 3 === 0 && !(opener.original % 3 === 0 && closer.original % 3 === 0));
 }
 
-/** 区切りの対応を決め、強調（`em`・`strong`）の木にする。 */
+/** 探索の下限を引く鍵。閉じの「開きにもなれるか」と元の長さの 3 での余りで、探す相手が決まる。 */
+function bottomKey(closer: Delim): number {
+  return (closer.canOpen ? 3 : 0) + (closer.original % 3);
+}
+
+/**
+ * 区切りの対応を決め、強調（`em`・`strong`）の木にする。
+ * CommonMark の区切りの手順どおり、開きが見つからなかった閉じは、その手前までを探索の下限（`openersBottom`）に記録する。
+ * 同じ鍵の閉じは下限より手前を探さないので、手間は入力の長さにほぼ比例する。
+ */
 function resolveEmphasis(nodes: InlineNode[]): InlineNode[] {
-  let i = 0;
-  while (i < nodes.length) {
-    const closer = nodes[i];
-    if (closer?.kind !== 'delim' || !closer.canClose || closer.count === 0) {
-      i += 1;
-      continue;
+  const head: Cell = { node: { kind: 'text', value: '' }, prev: null, next: null };
+  let tail = head;
+  const entries: Entry[] = [];
+  for (const node of nodes) {
+    const cell: Cell = { node, prev: tail, next: null };
+    tail.next = cell;
+    tail = cell;
+    // 開きにも閉じにもなれない区切りは、対応に関わらないので区切りのリストに入れない
+    if (node.kind === 'delim' && (node.canOpen || node.canClose)) {
+      const entry: Entry = { cell, delim: node, seq: entries.length, prev: entries.at(-1) ?? null, next: null };
+      const last = entries.at(-1);
+      if (last) last.next = entry;
+      entries.push(entry);
     }
-    const openerIndex = findOpener(nodes, i, closer);
-    const opener = nodes[openerIndex];
-    if (opener?.kind !== 'delim') {
-      i += 1;
-      continue;
-    }
-    const use = opener.count >= 2 && closer.count >= 2 ? 2 : 1;
-    const inner = settle(nodes.slice(openerIndex + 1, i));
-    opener.count -= use;
-    closer.count -= use;
-    const el: InlineNode = { kind: 'el', tag: use === 2 ? 'strong' : 'em', children: inner };
-    nodes.splice(openerIndex + 1, i - openerIndex - 1, el);
-    i = openerIndex + 2;
   }
-  return settle(nodes);
+
+  const unlink = (e: Entry): void => {
+    if (e.prev) e.prev.next = e.next;
+    if (e.next) e.next.prev = e.prev;
+  };
+  const openersBottom = new Map<number, number>();
+
+  let closerEntry: Entry | null = entries[0] ?? null;
+  while (closerEntry !== null) {
+    const closer: Delim = closerEntry.delim;
+    if (!closer.canClose || closer.count === 0) {
+      closerEntry = closerEntry.next;
+      continue;
+    }
+    const key = bottomKey(closer);
+    const bottom = openersBottom.get(key) ?? -1;
+    let opener: Entry | null = closerEntry.prev;
+    while (opener !== null && opener.seq > bottom && !matches(opener.delim, closer)) opener = opener.prev;
+    if (opener === null || opener.seq <= bottom) {
+      // 開きがなかった。次から同じ鍵の閉じは、ここより手前を探さない。閉じにしかなれない区切りは、以後は文字列として扱う
+      openersBottom.set(key, closerEntry.prev?.seq ?? -1);
+      const next: Entry | null = closerEntry.next;
+      if (!closer.canOpen) unlink(closerEntry);
+      closerEntry = next;
+      continue;
+    }
+
+    const use = opener.delim.count >= 2 && closer.count >= 2 ? 2 : 1;
+    // 開きと閉じの間にある節点を、対応の決まらなかった区切りを文字列に戻して、強調の中身にする
+    const inner: InlineNode[] = [];
+    let innerDepth = 0;
+    for (let c = opener.cell.next; c !== null && c !== closerEntry.cell; c = c.next) {
+      const settled = settleNode(c.node);
+      inner.push(settled);
+      innerDepth = Math.max(innerDepth, depthOf(settled));
+    }
+    opener.delim.count -= use;
+    closer.count -= use;
+    const marks = '*'.repeat(use);
+    const wrapped: InlineNode =
+      innerDepth < MAX_EMPHASIS_DEPTH
+        ? { kind: 'el', tag: use === 2 ? 'strong' : 'em', children: inner, depth: innerDepth + 1 }
+        : {
+            kind: 'group',
+            children: [{ kind: 'text', value: marks }, ...inner, { kind: 'text', value: marks }],
+            depth: innerDepth,
+          };
+    const el: Cell = { node: wrapped, prev: opener.cell, next: closerEntry.cell };
+    opener.cell.next = el;
+    closerEntry.cell.prev = el;
+    // 間にあった区切りは使えなくなる
+    opener.next = closerEntry;
+    closerEntry.prev = opener;
+    if (opener.delim.count === 0) unlink(opener);
+    if (closer.count === 0) {
+      const next: Entry | null = closerEntry.next;
+      unlink(closerEntry);
+      closerEntry = next;
+    }
+  }
+
+  const result: InlineNode[] = [];
+  for (let c = head.next; c !== null; c = c.next) result.push(settleNode(c.node));
+  return result;
 }
 
-/** 木を DOM にして `parent` に追加する。 */
+/**
+ * 木を DOM にして `parent` に追加する。入れ子が深くても呼び出しの深さが増えないよう、自前の積み方で辿る。
+ * 隣り合う文字列は1つの Text にまとめる（対応のなかった `*` が多数並んでも節点が増えない）。
+ */
 function build(nodes: readonly InlineNode[], parent: Node): void {
-  for (const n of nodes) {
+  interface Frame {
+    readonly nodes: readonly InlineNode[];
+    index: number;
+    readonly parent: Node;
+    readonly pending: string[];
+  }
+  const flush = (frame: Frame): void => {
+    if (frame.pending.length === 0) return;
+    frame.parent.appendChild(document.createTextNode(frame.pending.join('')));
+    frame.pending.length = 0;
+  };
+  const stack: Frame[] = [{ nodes, index: 0, parent, pending: [] }];
+  for (let frame = stack.at(-1); frame !== undefined; frame = stack.at(-1)) {
+    const n = frame.nodes[frame.index];
+    if (n === undefined) {
+      flush(frame);
+      stack.pop();
+      continue;
+    }
+    frame.index += 1;
     if (n.kind === 'text') {
-      parent.appendChild(document.createTextNode(n.value));
-    } else if (n.kind === 'code') {
+      frame.pending.push(n.value);
+      continue;
+    }
+    flush(frame);
+    if (n.kind === 'code') {
       const code = document.createElement('code');
       code.textContent = n.value;
-      parent.appendChild(code);
+      frame.parent.appendChild(code);
     } else if (n.kind === 'el') {
       const el = document.createElement(n.tag);
-      build(n.children, el);
-      parent.appendChild(el);
+      frame.parent.appendChild(el);
+      stack.push({ nodes: n.children, index: 0, parent: el, pending: [] });
+    } else if (n.kind === 'group') {
+      stack.push({ nodes: n.children, index: 0, parent: frame.parent, pending: [] });
     }
   }
 }

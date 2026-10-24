@@ -29,11 +29,42 @@ const FORBIDDEN_PATH_CHARS = ['(', ')', '[', ']', '{', '}', '\\', '$', '^', '+',
 const PATH_KEYS = ['exact', 'prefix', 'glob'] as const;
 type PathKey = (typeof PATH_KEYS)[number];
 
+/** パーセントエンコードを戻した文字列。戻せないときはそのまま。文字数は、書かれた文字で数えるために使う。 */
+function decodedForLength(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * パスの区間1つを、ブラウザが URL の `pathname` に入れる形（非 ASCII・空白などのパーセントエンコード）にする。
+ * `*`・`**` の区間はそのまま。`.`・`..` のようにブラウザが畳む区間も、書かれたまま残す（URL 側には現れないので、一致しないだけ）。
+ */
+function browserSegment(segment: string): string {
+  if (segment === '*' || segment === '**') return segment;
+  try {
+    // `#` はそのままでは URL のフラグメントになるので、先に区間の文字として符号化する
+    const { pathname } = new URL(`http://localhost/${segment.replaceAll('#', '%23')}`);
+    const encoded = pathname.slice(1);
+    return encoded === '' ? segment : encoded;
+  } catch {
+    return segment;
+  }
+}
+
+/** 条件のパスを、照合の相手（ブラウザの `pathname`）と同じ形にそろえる。同じ入力に何度かけても結果は変わらない。 */
+function browserPath(value: string): string {
+  return value.split('/').map(browserSegment).join('/');
+}
+
 /** パス1つの問題点を日本語で返す。問題がなければ空。 */
 function pathProblems(kind: PathKey, value: string): string[] {
   const problems: string[] = [];
   if (!value.startsWith('/')) problems.push('パスは / で始めてください');
-  if (value.length > TOUR_LIMITS.pathChars) {
+  // 解析済みのツアーを検証し直すときは、条件のパスがパーセントエンコード済み。書かれた文字数で数える
+  if (decodedForLength(value).length > TOUR_LIMITS.pathChars) {
     problems.push(`パスは${String(TOUR_LIMITS.pathChars)}文字以内にしてください`);
   }
   if (FORBIDDEN_PATH_CHARS.some((c) => value.includes(c))) {
@@ -75,7 +106,13 @@ const PathCondSchema = z
       if (value === undefined) continue;
       for (const message of pathProblems(key, value)) addIssue(ctx, [key], message);
     }
-  });
+  })
+  // 解析の時点で、条件のパスを URL の `pathname` と同じ形にそろえる（照合の側は `pathname` をそのまま使う）
+  .transform((p) => ({
+    ...(p.exact !== undefined ? { exact: browserPath(p.exact) } : {}),
+    ...(p.prefix !== undefined ? { prefix: browserPath(p.prefix) } : {}),
+    ...(p.glob !== undefined ? { glob: browserPath(p.glob) } : {}),
+  }));
 
 /** URL 条件。`origin` が origins のいずれかと一致するかは rules.ts で確かめる。 */
 export const UrlCondSchema = z.strictObject({

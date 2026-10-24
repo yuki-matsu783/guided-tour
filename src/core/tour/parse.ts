@@ -4,7 +4,7 @@
  * エラーは利用者向けの日本語で、場所（path）と行番号（取れないときは null）を持つ。入力の中身（値）はメッセージに含めない。
  *
  * 処理フロー:
- * 1. yaml で解析する（YAML 1.2、マージキー無効、重複キー・独自タグ・警告はエラー）。構文のエラーがあればここで返す
+ * 1. yaml で解析する（YAML 1.2、マージキー無効、独自タグ・警告はエラー）。構文のエラーがあればここで返す
  * 2. 構文木を調べる（最上位が対応表か、マージキー、キーが文字列か・文字列として重複していないか、入れ子の深さ）
  * 3. JS の値にする（エイリアス展開は100まで）。展開後の値の入れ子の深さも調べる
  * 4. zod で形式を検証し、エラーの場所を YAML の行に対応付ける
@@ -260,8 +260,6 @@ function describeZodIssue(issue: z.core.$ZodIssue, data: unknown): RuleIssue[] {
 
 function yamlMessage(code: string): string {
   switch (code) {
-    case 'DUPLICATE_KEY':
-      return '同じキーが重複しています。同じ階層に同じキーは書けません';
     case 'MULTIPLE_DOCS':
       return '複数のドキュメント（---）は使えません。ツアーは1つのドキュメントで書いてください';
     case 'TAG_RESOLVE_FAILED':
@@ -293,7 +291,8 @@ export function parseTour(yamlText: string, fileName: string): ParseResult {
     doc = parseDocument(yamlText, {
       version: '1.2',
       merge: false,
-      uniqueKeys: true,
+      // yaml の重複キーの検査はキー数の2乗の手間になる。重複は inspectTree が線形の手間で調べる
+      uniqueKeys: false,
       prettyErrors: false,
       lineCounter: lc,
     });
@@ -313,7 +312,8 @@ export function parseTour(yamlText: string, fileName: string): ParseResult {
   // 2. 構文木
   const tree = inspectTree(root);
   if (tree.findings.length > 0) {
-    return fail(tree.findings.map((f) => make(lc.linePos(f.offset).line, [], f.message)));
+    // 返すのは先頭の数件だけなので、先に絞ってから位置を求める
+    return fail(tree.findings.slice(0, TOUR_LIMITS.issues).map((f) => make(lc.linePos(f.offset).line, [], f.message)));
   }
 
   // 3. JS の値へ
@@ -344,14 +344,14 @@ export function parseTour(yamlText: string, fileName: string): ParseResult {
   // 4. 形式
   const parsed = TourSchema.safeParse(data);
   if (!parsed.success) {
-    const found = parsed.error.issues.flatMap((issue) => describeZodIssue(issue, data));
-    return fail(found.map((f) => toIssue(f)));
+    const found = parsed.error.issues.slice(0, TOUR_LIMITS.issues).flatMap((issue) => describeZodIssue(issue, data));
+    return fail(found.slice(0, TOUR_LIMITS.issues).map((f) => toIssue(f)));
   }
 
   // 5. ツアー全体の規則
   const rules = validateTourRules(parsed.data);
-  const warnings = rules.warnings.map((w) => toIssue(w)).slice(0, TOUR_LIMITS.issues);
-  if (rules.errors.length > 0) return fail(rules.errors.map((r) => toIssue(r)), warnings);
+  const warnings = rules.warnings.slice(0, TOUR_LIMITS.issues).map((w) => toIssue(w));
+  if (rules.errors.length > 0) return fail(rules.errors.slice(0, TOUR_LIMITS.issues).map((r) => toIssue(r)), warnings);
   return { ok: true, tour: parsed.data, warnings };
 
   function toIssue(found: RuleIssue): Issue {
