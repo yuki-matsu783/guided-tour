@@ -56,6 +56,7 @@ export type RejectReason =
   | 'noPageStep'
   | 'notBound'
   | 'noOpenUrl'
+  | 'tabBoundToOtherRole'
   | 'openFailed'
   | 'internal';
 

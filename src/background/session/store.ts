@@ -20,7 +20,8 @@ import {
 } from './state.ts';
 import type { StorageArea } from './types.ts';
 
-export type ProgressMap = Record<string, Progress>;
+/** ツアー ID ごとの進捗。ID は任意の文字列なので、`Object.prototype` の名前と衝突しない Map で持つ。 */
+export type ProgressMap = ReadonlyMap<string, Progress>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -54,18 +55,19 @@ export function createStore(session: StorageArea, local: StorageArea): Store {
     } catch {
       return null;
     }
-    const map: ProgressMap = {};
+    const map = new Map<string, Progress>();
     if (!isRecord(raw)) return map;
     for (const [tourId, value] of Object.entries(raw)) {
       const parsed = ProgressSchema.safeParse(value);
-      if (parsed.success) map[tourId] = parsed.data;
+      if (parsed.success) map.set(tourId, parsed.data);
     }
     return map;
   }
 
+  /** storage へは通常のオブジェクトに直して書く（`Object.fromEntries` は `__proto__` も自分のキーとして作る）。 */
   async function writeProgress(map: ProgressMap): Promise<boolean> {
     try {
-      await local.set({ [PROGRESS_KEY]: map });
+      await local.set({ [PROGRESS_KEY]: Object.fromEntries(map) });
       return true;
     } catch {
       return false;
@@ -97,23 +99,26 @@ export function createStore(session: StorageArea, local: StorageArea): Store {
     async saveProgress(state, savedAt) {
       const map = await readProgress();
       if (map === null) return false;
-      const current = map[state.tourId];
+      const current = map.get(state.tourId);
       if (current?.sessionId === state.sessionId && current.gen > state.gen) return true;
-      map[state.tourId] = {
+      const next = new Map(map);
+      next.set(state.tourId, {
         sessionId: state.sessionId,
         gen: state.gen,
         stepId: state.stepId,
         stepIndex: state.stepIndex,
         savedAt,
-      };
-      return writeProgress(map);
+      });
+      return writeProgress(next);
     },
 
     async removeProgress(tourId, sessionId) {
       const map = await readProgress();
       if (map === null) return false;
-      if (map[tourId]?.sessionId !== sessionId) return true;
-      return writeProgress(Object.fromEntries(Object.entries(map).filter(([id]) => id !== tourId)));
+      if (map.get(tourId)?.sessionId !== sessionId) return true;
+      const next = new Map(map);
+      next.delete(tourId);
+      return writeProgress(next);
     },
 
     async readPendingDeletes() {

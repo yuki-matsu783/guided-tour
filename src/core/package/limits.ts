@@ -12,6 +12,8 @@ export const PACKAGE_LIMITS = {
   expandedBytes: 50 * MB,
   /** パッケージ内のファイル数（ディレクトリのエントリは数えない） */
   fileCount: 500,
+  /** zip の項目の総数（ファイル・ディレクトリ・名前の不正な項目をすべて数える） */
+  entryCount: 2000,
   /** 取り込み済みツアー全体の合計容量 */
   totalBytes: 200 * MB,
   /** 画像1枚のバイト数 */

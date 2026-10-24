@@ -16,6 +16,7 @@ import {
   type UiSettings,
 } from '../../shared/messages/index.ts';
 import type { TabEvaluation } from '../ports.ts';
+import { ownValue } from './own.ts';
 import type { TabStatusSnapshot, TourState } from './state.ts';
 
 /** 描画の指示の種類。`recheck`・`scroll` は、直前も描画していたときだけ専用の指示にする。 */
@@ -115,12 +116,12 @@ export function planDisplay(input: PlanInput): Plan {
   const { prev, next, tour, evaluation } = input;
   const step = next.status === 'running' ? pageStepOf(tour, next) : undefined;
   const shown = step !== undefined && evaluation !== null && isShown(evaluation.status);
-  const binding = step === undefined ? undefined : next.tabs[step.tab];
+  const binding = step === undefined ? undefined : ownValue(next.tabs, step.tab);
 
   // 直前の描画先（役割が変わったとき、前のタブの表示を消すために使う）
   let prevTabId: number | undefined;
   if (prev?.status === 'running' && prev.tabStatus !== null && isShown(prev.tabStatus.status)) {
-    prevTabId = prev.tabs[prev.tabStatus.role]?.tabId;
+    prevTabId = ownValue(prev.tabs, prev.tabStatus.role)?.tabId;
   }
 
   let rev = next.rev;

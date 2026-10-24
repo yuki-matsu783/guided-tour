@@ -73,7 +73,7 @@ describe('unzipPackage の展開', () => {
     expect(errorsOf(over).join()).toContain('500');
   });
 
-  it('T-PKG-15: 中央ディレクトリが少なく申告していても、展開中に 501 番目で打ち切る', async () => {
+  it('T-PKG-15: 中央ディレクトリが少なく申告していても、501 個目を展開せずに拒否する（中央ディレクトリにない項目として）', async () => {
     const zip = buildZip(Array.from({ length: 501 }, (_, i) => ({ name: `f${String(i)}.txt`, data: 'x' })));
     // EOCD の件数・中央ディレクトリのサイズを 1 件にして申告を偽る
     const eocd = zip.length - 22;
@@ -86,7 +86,7 @@ describe('unzipPackage の展開', () => {
     expect(central).toBeGreaterThan(0);
     const result = await unzipPackage(forged, 'p.zip');
     expect(result.ok).toBe(false);
-    expect(errorsOf(result).join()).toContain('500');
+    expect(errorsOf(result).join()).toContain('中央ディレクトリにない');
   });
 
   it('T-PKG-16: 打ち切りのエラーに、超えた上限の名前と値が含まれる', async () => {
@@ -165,5 +165,80 @@ describe('unzipPackage のエントリの検査', () => {
     const result = await rejected(Array.from({ length: 30 }, (_, i) => ({ name: `a\\${String(i)}`, data: 'x' })));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errors).toHaveLength(20);
+  });
+
+  describe('中央ディレクトリを信頼できない形', () => {
+    const link = () =>
+      buildZip([
+        { name: 'tour.yaml', data: 'x' },
+        { name: 'steps/a.md', data: '/etc/passwd', symlink: true },
+      ]);
+    const eocdOf = (zip: Uint8Array) => zip.length - 22;
+
+    it('T-PKG-14: EOCD の件数が 0xffff（zip64）の zip は、シンボリックリンクを含んでいても拒否する（追加）', async () => {
+      const forged = link().slice();
+      forged[eocdOf(forged) + 10] = 0xff;
+      forged[eocdOf(forged) + 11] = 0xff;
+      expect((await unzipPackage(forged, 'p.zip')).ok).toBe(false);
+    });
+
+    it('T-PKG-14: EOCD の件数が 0 の zip は拒否する（追加）', async () => {
+      const forged = link().slice();
+      for (const at of [8, 9, 10, 11]) forged[eocdOf(forged) + at] = 0;
+      expect((await unzipPackage(forged, 'p.zip')).ok).toBe(false);
+    });
+
+    it('T-PKG-14: 中央ディレクトリの名前とローカルヘッダーの名前が食い違う zip は拒否する（追加）', async () => {
+      const forged = link().slice();
+      const text = new TextDecoder('latin1').decode(forged);
+      forged[text.lastIndexOf('steps/a.md')] = 'S'.charCodeAt(0);
+      const result = await unzipPackage(forged, 'p.zip');
+      expect(result.ok).toBe(false);
+    });
+
+    it('T-PKG-14: 中央ディレクトリの件数がローカルヘッダーより少ない zip は拒否する（追加）', async () => {
+      const zip = buildZip([
+        { name: 'a.txt', data: 'x' },
+        { name: 'b.txt', data: 'y' },
+      ]);
+      const forged = zip.slice();
+      forged[eocdOf(forged) + 8] = 1;
+      forged[eocdOf(forged) + 10] = 1;
+      expect((await unzipPackage(forged, 'p.zip')).ok).toBe(false);
+    });
+
+    it('T-PKG-14: 正しい zip（シンボリックリンクなし）は通り、シンボリックリンクは拒否される（追加）', async () => {
+      expect((await unzipPackage(buildZip([{ name: 'a.txt', data: 'x' }]), 'p.zip')).ok).toBe(true);
+      expect((await unzipPackage(link(), 'p.zip')).ok).toBe(false);
+    });
+  });
+
+  describe('項目の総数', () => {
+    const dirs = (n: number) => buildZip(Array.from({ length: n }, (_, i) => ({ name: `d${String(i)}/` })));
+
+    it('T-PKG-97: ディレクトリの項目だけの 2,000 件は通り、2,001 件は拒否され、上限が表示される', async () => {
+      const limit = PACKAGE_LIMITS.entryCount;
+      expect(limit).toBe(2000);
+      expect((await unzipPackage(dirs(limit), 'p.zip')).ok).toBe(true);
+      const over = await unzipPackage(dirs(limit + 1), 'p.zip');
+      expect(over.ok).toBe(false);
+      expect(errorsOf(over).join()).toContain('2,000');
+    });
+
+    it('T-PKG-97: 名前の不正な項目も総数に数え、上限で展開を打ち切る（エラーを積み続けない）', async () => {
+      const bad = buildZip(Array.from({ length: 2001 }, (_, i) => ({ name: `../x${String(i)}.txt`, data: 'x' })));
+      const result = await unzipPackage(bad, 'p.zip');
+      expect(result.ok).toBe(false);
+      expect(errorsOf(result).join()).toContain('2,000');
+    });
+
+    it('T-PKG-97: 中央ディレクトリが少なく申告しても、ローカルヘッダーの数が上限を超えれば打ち切る', async () => {
+      const zip = dirs(2001);
+      const forged = zip.slice();
+      const eocd = forged.length - 22;
+      forged[eocd + 8] = 5;
+      forged[eocd + 10] = 5;
+      expect((await unzipPackage(forged, 'p.zip')).ok).toBe(false);
+    });
   });
 });

@@ -35,6 +35,7 @@ export interface RouterDeps {
     handlePanel(msg: PanelToBg): Promise<unknown>;
     handlePage: (msg: PageToBg, sender: PageSender) => Promise<unknown>;
     onCatalogChanged: Session['onCatalogChanged'];
+    onCatalogRemoved: Session['onCatalogRemoved'];
     view: Session['view'];
   };
   readonly catalog: Pick<CatalogPort, 'reload' | 'remove'>;
@@ -91,7 +92,7 @@ export function createRouter(deps: RouterDeps): {
       case 'REMOVE': {
         const removed = await catalog.remove(msg.tourId);
         if (!removed) return ACK_NG;
-        await session.onCatalogChanged(msg.tourId, '');
+        await session.onCatalogRemoved(msg.tourId);
         return ACK_OK;
       }
       case 'RELOAD': {

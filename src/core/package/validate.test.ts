@@ -345,3 +345,31 @@ steps:
     if (result.ok) expect(result.warnings).toHaveLength(1);
   });
 });
+
+describe('Markdown の画像の記法で、markdown-it が拒否する URL', () => {
+  const bodyOf = (body: string) => tourYaml({ steps: guideStep('s1', { body }) });
+
+  it.each([
+    '![x](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)',
+    '![x](javascript:alert(1))',
+    '![x](file:///etc/passwd)',
+    '![x](vbscript:run)',
+    '文の途中に ![図](javascript:void(0)) がある',
+  ])('T-PKG-61: 本文の %s はエラーになる（追加）', (body) => {
+    const errors = errorsOf(pack(bodyOf(body), null));
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.map((e) => e.message).join()).toContain('使えない URL');
+  });
+
+  it('T-PKG-61: bodyFile の Markdown に書かれた拒否される URL もエラーになる（追加）', () => {
+    const yaml = tourYaml({ steps: guideStep('s1', { bodyFile: 'a.md' }) });
+    const result = pack(yaml, { 'a.md': '![x](javascript:alert(1))' });
+    expect(result.ok).toBe(false);
+  });
+
+  it('T-PKG-54: コードの中の記法や、通常の画像は影響を受けない（追加）', () => {
+    expect(pack(bodyOf('`![x](javascript:a)`'), null).ok).toBe(true);
+    expect(pack(bodyOf('```\n![x](javascript:a)\n```'), null).ok).toBe(true);
+    expect(pack(bodyOf(`![ok](${dataUrl('image/png', png(5, 5))})`), null).ok).toBe(true);
+  });
+});

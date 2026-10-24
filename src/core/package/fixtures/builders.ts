@@ -46,6 +46,17 @@ export function gif(width: number, height: number, version: '87a' | '89a' = '89a
   return Uint8Array.from([...ascii(`GIF${version}`), ...le16(width), ...le16(height), 0, 0, 0]);
 }
 
+/** 論理画面と、各フレームの画像記述子（幅・高さ）を持つ GIF。フレームごとに拡張ブロックを1つ挟む。 */
+export function gifWithFrames(width: number, height: number, frames: readonly (readonly [number, number])[]): Bytes {
+  const out: number[] = [...ascii('GIF89a'), ...le16(width), ...le16(height), 0, 0, 0];
+  for (const [w, h] of frames) {
+    out.push(0x21, 0xf9, 4, 0, 0, 0, 0, 0);
+    out.push(0x2c, ...le16(0), ...le16(0), ...le16(w), ...le16(h), 0, 2, 1, 0, 0);
+  }
+  out.push(0x3b);
+  return Uint8Array.from(out);
+}
+
 export interface JpegOptions {
   /** SOF のマーカー番号（既定 0xC0） */
   sof?: number;

@@ -177,10 +177,14 @@ export class FakeTabs {
     _t,
     role,
     roles,
-  ) => ({ status: roles[role] === undefined ? 'missing' : 'ok' });
+  ) => ({ status: Object.hasOwn(roles, role) ? 'ok' : 'missing' });
   within = true;
   injectOk = true;
   openResult: number | null = 99;
+  /** 今のタブ。null なら `openResult`（開いた先のタブ）と同じ。 */
+  currentTab: number | null = null;
+  /** `setActiveTour` の呼び出しの記録（ツアーの ID。実行中でなければ null）。 */
+  readonly activeTours: (string | null)[] = [];
   shortcutValue: string | null = 'Alt+Shift+G';
   private listeners: ((e: TabEvent) => void)[] = [];
 
@@ -206,6 +210,10 @@ export class FakeTabs {
           this.injected.push(tabId);
           return Promise.resolve(this.injectOk);
         }),
+      currentTabId: () => Promise.resolve(this.currentTab ?? this.openResult),
+      setActiveTour: (tour) => {
+        this.activeTours.push(tour === null ? null : tour.id);
+      },
       open: (mode, url) =>
         guard('tabs.open', () => {
           this.opened.push({ mode, url });
@@ -251,6 +259,7 @@ export class FakeTabs {
     this.injected.length = 0;
     this.opened.length = 0;
     this.focused.length = 0;
+    this.activeTours.length = 0;
   }
 }
 

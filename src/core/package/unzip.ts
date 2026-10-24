@@ -3,8 +3,10 @@
  * 入力は zip のバイト列とファイル名。出力は、エントリ名（ディレクトリを除く）からバイト列への対応表、またはエラー。
  *
  * 処理フロー:
- * 1. 中央ディレクトリを読み、シンボリックリンクの名前とファイル数を先に調べる（宣言サイズは使わない）
- * 2. 圧縮側を 4 KB ずつ fflate の Unzip に渡す。ローカルヘッダーが出るたびに名前・重複・ファイル数を検査する
+ * 1. 中央ディレクトリを読み、シンボリックリンクの名前とファイル数を先に調べる（宣言サイズは使わない）。
+ *    件数が 0・zip64 など読み切れない形や、項目の総数が上限を超える形は拒否する
+ * 2. 圧縮側を 4 KB ずつ fflate の Unzip に渡す。ローカルヘッダーが出るたびに、中央ディレクトリにある名前か、
+ *    項目の総数、名前・重複・ファイル数を検査する。終わったら、中央ディレクトリの項目がすべて出たかを確かめる
  * 3. 展開結果を受け取るたびに合計を確かめ、50 MB を超えたら以降を渡さずに打ち切る
  * 4. 一定時間ごとに await で処理を譲り、画面を長く占有しない
  */
@@ -39,9 +41,14 @@ function defaultYield(): Promise<void> {
 interface CentralInfo {
   /** シンボリックリンクのエントリ名 */
   symlinks: Set<string>;
+  /** ディレクトリを含む、すべてのエントリ名（中央ディレクトリの並び順） */
+  names: string[];
   /** ディレクトリを除くエントリの数 */
   fileCount: number;
 }
+
+/** 読めない（zip ではない・壊れている）か、信頼できない形（検査の根拠にできない）か。 */
+type CentralResult = { kind: 'ok'; info: CentralInfo } | { kind: 'unreadable' } | { kind: 'untrusted' };
 
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
@@ -57,9 +64,12 @@ function decodeName(raw: Uint8Array, utf8: boolean): string {
   return out;
 }
 
-/** 中央ディレクトリを読む。zip として読めなければ null。zip64 は名前の情報なしで通す。 */
-function readCentralDirectory(data: Uint8Array): CentralInfo | null {
-  if (data.length < EOCD_MIN) return null;
+/**
+ * 中央ディレクトリを読む。シンボリックリンクと名前の検査の根拠にするので、件数が 0 や zip64（0xffff など）の
+ * ように読み切れない形は、信頼できないものとして扱う。
+ */
+function readCentralDirectory(data: Uint8Array): CentralResult {
+  if (data.length < EOCD_MIN) return { kind: 'unreadable' };
   let eocd = -1;
   const lowest = Math.max(0, data.length - EOCD_MIN - 0xffff);
   for (let i = data.length - EOCD_MIN; i >= lowest; i--) {
@@ -68,19 +78,21 @@ function readCentralDirectory(data: Uint8Array): CentralInfo | null {
       break;
     }
   }
-  if (eocd < 0) return null;
+  if (eocd < 0) return { kind: 'unreadable' };
   const total = u16le(data, eocd + 10);
   const size = u32le(data, eocd + 12);
   const offset = u32le(data, eocd + 16);
-  if (total === 0xffff || size === 0xffffffff || offset === 0xffffffff) {
-    return { symlinks: new Set(), fileCount: 0 };
+  if (total === 0 || total === 0xffff || size === 0xffffffff || offset === 0xffffffff) {
+    return { kind: 'untrusted' };
   }
-  if (offset + size > data.length) return null;
+  if (total > PACKAGE_LIMITS.entryCount) return { kind: 'untrusted' };
+  if (offset + size > data.length) return { kind: 'unreadable' };
   const symlinks = new Set<string>();
+  const names: string[] = [];
   let fileCount = 0;
   let pos = offset;
   for (let i = 0; i < total; i++) {
-    if (pos + 46 > data.length || u32le(data, pos) !== CENTRAL_SIGNATURE) return null;
+    if (pos + 46 > data.length || u32le(data, pos) !== CENTRAL_SIGNATURE) return { kind: 'unreadable' };
     const madeBy = u16le(data, pos + 4);
     const flags = u16le(data, pos + 8);
     const nameLength = u16le(data, pos + 28);
@@ -88,13 +100,14 @@ function readCentralDirectory(data: Uint8Array): CentralInfo | null {
     const commentLength = u16le(data, pos + 32);
     const attributes = u32le(data, pos + 38);
     const end = pos + 46 + nameLength + extraLength + commentLength;
-    if (end > data.length) return null;
+    if (end > data.length) return { kind: 'unreadable' };
     const name = decodeName(data.subarray(pos + 46, pos + 46 + nameLength), (flags & 0x800) !== 0);
+    names.push(name);
     if (!name.endsWith('/')) fileCount++;
     if (madeBy >>> 8 === UNIX && ((attributes >>> 16) & S_IFMT) === S_IFLNK) symlinks.add(name);
     pos = end;
   }
-  return { symlinks, fileCount };
+  return { kind: 'ok', info: { symlinks, names, fileCount } };
 }
 
 // ---- 展開 ----
@@ -106,12 +119,18 @@ export async function unzipPackage(
 ): Promise<UnzipResult> {
   const issue = (path: string, message: string): Issue => ({ file: fileName, line: null, path, message });
   const countMessage = `パッケージ内のファイル数が上限（${String(PACKAGE_LIMITS.fileCount)} 個）を超えています`;
+  const entriesMessage = `zip の項目の総数が上限（${PACKAGE_LIMITS.entryCount.toLocaleString('en-US')} 個）を超えているため、展開を打ち切りました`;
+  const untrustedMessage = `zip の中央ディレクトリを信頼できません（項目が無い・zip64・総数が上限（${PACKAGE_LIMITS.entryCount.toLocaleString('en-US')} 個）を超えている、のいずれかです）`;
   const expandedMessage = `展開後の合計サイズが上限（${formatBytesLimit(PACKAGE_LIMITS.expandedBytes)}）を超えたため、展開を打ち切りました`;
 
-  const central = readCentralDirectory(data);
-  if (central === null) {
+  const result = readCentralDirectory(data);
+  if (result.kind === 'unreadable') {
     return { ok: false, errors: [issue('', 'zip として読めません。壊れているか、zip ではないファイルです')] };
   }
+  if (result.kind === 'untrusted') {
+    return { ok: false, errors: [issue('', untrustedMessage)] };
+  }
+  const central = result.info;
   if (central.fileCount > PACKAGE_LIMITS.fileCount) {
     return { ok: false, errors: [issue('', countMessage)] };
   }
@@ -121,13 +140,29 @@ export async function unzipPackage(
   const seen = new Set<string>();
   let fileCount = 0;
   let expanded = 0;
+  /** ローカルヘッダーで出会った項目の数。 */
+  let entryCount = 0;
+  /** 中央ディレクトリの名前ごとの、まだ出会っていない数。 */
+  const unmatched = new Map<string, number>();
+  for (const name of central.names) unmatched.set(name, (unmatched.get(name) ?? 0) + 1);
   /** 上限を超えた・展開に失敗した。以降は何も受け取らない。 */
   const stop: { issue: Issue | null } = { issue: null };
 
   const unzip = new Unzip((file) => {
     if (stop.issue) return;
+    entryCount++;
+    if (entryCount > PACKAGE_LIMITS.entryCount) {
+      stop.issue = issue('', entriesMessage);
+      return;
+    }
     const name = file.name;
     const shown = displayName(name);
+    const remaining = unmatched.get(name) ?? 0;
+    if (remaining === 0) {
+      errors.push(issue(shown, '中央ディレクトリにない項目があります。zip の構造が正しくありません'));
+      return;
+    }
+    unmatched.set(name, remaining - 1);
     const problem = checkEntryName(name);
     if (problem !== null) {
       errors.push(issue(shown, problem));
@@ -190,6 +225,9 @@ export async function unzipPackage(
   }
 
   if (stop.issue) return { ok: false, errors: [stop.issue] };
+  if (errors.length === 0 && entryCount !== central.names.length) {
+    errors.push(issue('', '中央ディレクトリの項目と、ファイルの項目が一致しません。zip の構造が正しくありません'));
+  }
   if (errors.length > 0) return { ok: false, errors: errors.slice(0, PACKAGE_LIMITS.issues) };
   return { ok: true, entries };
 }

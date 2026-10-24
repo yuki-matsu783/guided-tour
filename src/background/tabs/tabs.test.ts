@@ -484,6 +484,7 @@ describe('イベント', () => {
     const tour = loadTour();
     const env = makeEnv([tab(1, 'https://a.example/app')]);
     const { events, tabs } = collect(env);
+    tabs.setActiveTour(tour);
     env.scripting.mockRejectedValueOnce(new Error('x'));
     await tabs.inject(tour, 1);
     expect(env.scripting).toHaveBeenCalledTimes(1);
@@ -492,6 +493,38 @@ describe('イベント', () => {
     expect(env.scripting).toHaveBeenCalledTimes(2);
     expect(events).toEqual([{ kind: 'completed', tabId: 1 }]);
     expect((await tabs.evaluate(tour, stepOf(tour, 's1'), { main: bind(1) })).status).toBe('ok');
+  });
+
+  it('T-TAB-41: 実行中のツアーがないとき（終了・完了・一時中断の後）、onCompleted で組み込みを再試行しない（追加）', async () => {
+    const tour = loadTour();
+    const env = makeEnv([tab(1, 'https://a.example/app')]);
+    const { tabs } = collect(env);
+    tabs.setActiveTour(tour);
+    env.scripting.mockRejectedValueOnce(new Error('x'));
+    await tabs.inject(tour, 1);
+    tabs.setActiveTour(null);
+    env.fire.completed({ tabId: 1, frameId: 0 });
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(env.scripting).toHaveBeenCalledTimes(1);
+  });
+
+  it('T-TAB-41: 判定・組み込みを依頼されただけでは、実行中のツアーとして覚えない（追加）', async () => {
+    const tour = loadTour();
+    const env = makeEnv([tab(1, 'https://a.example/app')]);
+    const { tabs } = collect(env);
+    env.scripting.mockRejectedValueOnce(new Error('x'));
+    await tabs.inject(tour, 1);
+    await tabs.evaluate(tour, stepOf(tour, 's1'), { main: bind(1) });
+    env.fire.completed({ tabId: 1, frameId: 0 });
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(env.scripting).toHaveBeenCalledTimes(1);
+  });
+
+  it('R-B3: currentTabId は今のウィンドウの注目中のタブの ID を返し、無ければ null', async () => {
+    const withActive = collect(makeEnv([tab(1, 'https://a.example/app'), tab(2, 'https://a.example/b', { active: true })]));
+    expect(await withActive.tabs.currentTabId()).toBe(2);
+    const none = collect(makeEnv([tab(1, 'https://a.example/app')]));
+    expect(await none.tabs.currentTabId()).toBeNull();
   });
 
   it('T-TAB-41: 組み込みに失敗していないタブでは、onCompleted で組み込み直さない', async () => {

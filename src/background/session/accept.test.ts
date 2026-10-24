@@ -185,11 +185,11 @@ describe('受け付けと破棄', () => {
   it('T-SES-10: ページ側からの操作で、documentId が記録済みのものと違うとき、捨てられる', async () => {
     const env = await running();
     const res = await env.session.handlePage(
-      { type: 'SET_UI', enabled: false },
+      { type: 'SET_UI', mode: 'minimized' },
       sender(ROLE_TAB, 'another-document'),
     );
     expect(res).toEqual({ status: 'discarded', reason: 'senderMismatch' });
-    const noDoc = await env.session.handlePage({ type: 'SET_UI', enabled: false }, { tabId: ROLE_TAB, frameId: 0, documentId: undefined });
+    const noDoc = await env.session.handlePage({ type: 'SET_UI', mode: 'minimized' }, { tabId: ROLE_TAB, frameId: 0, documentId: undefined });
     expect(noDoc.status).toBe('discarded');
   });
 

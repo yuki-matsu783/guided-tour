@@ -36,7 +36,7 @@ async function catalogView(
   return Promise.all(
     entries.map(async (entry) => {
       const tour = entry.tour;
-      const saved = progress?.[tour.id] ?? null;
+      const saved = progress?.get(tour.id) ?? null;
       const hidden =
         saved !== null &&
         pendingList.some((p) => p.tourId === tour.id && p.sessionId === saved.sessionId);

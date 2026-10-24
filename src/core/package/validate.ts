@@ -203,6 +203,10 @@ export function validatePackage(input: PackageInput): PackageResult {
   ): void => {
     for (const image of extractMarkdownImages(text)) {
       const where = labelFor(displayName(image.src), image.line);
+      if (image.rejected) {
+        report(where, '画像の参照として使えない URL です。パッケージ内の画像のパスか、許可した data URL を書いてください');
+        continue;
+      }
       if (image.alt === '') report(where, '画像には代替文が必要です（![代替文](パス) の形で書いてください）');
       checkImage(image.src, base, where, true);
     }

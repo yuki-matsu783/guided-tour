@@ -323,13 +323,37 @@ describe('remove', () => {
 });
 
 describe('キャッシュ', () => {
-  it('キャッシュ中は保存済みのデータを読み直さない', async () => {
+  it('キャッシュ中で、保存済みの id と hash が変わらないときは、組み立て直さない', async () => {
     await putTour(env.db, 'i1');
     await env.catalog.list();
     await env.catalog.list();
+    await env.catalog.get('i1');
     expect(env.loadBundled).toHaveBeenCalledTimes(1);
+  });
+
+  it('T-CAT-24: 別の場所で取り込みが増えたとき、reload なしでも list() に反映される（追加）', async () => {
+    await putTour(env.db, 'i1');
+    await env.catalog.list();
     await putTour(env.db, 'i2');
-    expect(await env.catalog.list()).toHaveLength(1);
+    expect((await env.catalog.list()).map((e) => e.tour.id).sort()).toEqual(['i1', 'i2']);
+    expect(await env.catalog.get('i2')).not.toBeNull();
+  });
+
+  it('T-CAT-24: 別の場所で hash が変わったとき、get() が新しい hash の内容を返す（追加）', async () => {
+    await putTour(env.db, 'i1', { hash: 'h1' });
+    expect((await env.catalog.get('i1'))?.hash).toBe('h1');
+    await putTour(env.db, 'i1', { hash: 'h2', name: '改訂' });
+    const got = await env.catalog.get('i1');
+    expect(got?.hash).toBe('h2');
+    expect(got?.tour.name).toBe('改訂');
+    expect(await env.catalog.getPinned('i1', 'h1')).toBeNull();
+  });
+
+  it('T-CAT-19: 別の場所で削除されたとき、list() から消える（追加）', async () => {
+    await putTour(env.db, 'i1');
+    await env.catalog.list();
+    await withTx(env.db, STORE.tours, 'readwrite', (tx) => requestToPromise(tx.objectStore(STORE.tours).delete('i1')));
+    expect(await env.catalog.list()).toEqual([]);
   });
 
   it('T-CAT-20 T-CAT-21 T-CAT-22: reload() でキャッシュが捨てられ、保存済みのデータから組み立て直される', async () => {

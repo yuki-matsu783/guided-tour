@@ -50,6 +50,10 @@ function setup() {
       calls.push(`changed:${tourId}:${hash}`);
       return Promise.resolve();
     }),
+    onCatalogRemoved: vi.fn((tourId: string) => {
+      calls.push(`removed:${tourId}`);
+      return Promise.resolve();
+    }),
     view: vi.fn(() => Promise.resolve(VIEW)),
   };
   const catalog = {
@@ -159,14 +163,14 @@ describe('配線', () => {
     expect(t.logstore.ingest).toHaveBeenNthCalledWith(2, log, 'content');
   });
 
-  it('R-WIRE-07: CATALOG_CHANGED は reload の後に状態管理へ、REMOVE は remove の後に空の hash で通知する', async () => {
+  it('R-WIRE-07: CATALOG_CHANGED は reload の後に状態管理へ、REMOVE は remove の後に削除として通知する', async () => {
     const t = setup();
     const send = vi.fn();
     t.router.onMessage({ type: 'CATALOG_CHANGED', tourId: 'a', hash: 'h' }, PANEL, send);
     await flush();
     t.router.onMessage({ type: 'REMOVE', tourId: 'a' }, PANEL, send);
     await flush();
-    expect(t.calls).toEqual(['reload', 'panel:CATALOG_CHANGED', 'remove', 'changed:a:']);
+    expect(t.calls).toEqual(['reload', 'panel:CATALOG_CHANGED', 'remove', 'removed:a']);
     expect(send).toHaveBeenNthCalledWith(1, { ok: true });
     expect(send).toHaveBeenNthCalledWith(2, { ok: true });
   });

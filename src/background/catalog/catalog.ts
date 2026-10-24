@@ -4,8 +4,11 @@
  * 取り込んだツアーは、保存済みの `compiled` を `CompiledTourSchema` で検証し直して使う（YAML は解析しない）。
  * 検証に通らないものは一覧から外し、他には影響させない。
  * キャッシュは `reload()`・`remove()` で捨てる。保存済みのデータだけから組み立て直せる。
+ * `list()`・`get()` のたびに、`tours` の `id` と `hash` だけを読み、キャッシュを作ったときと違えば組み立て直す
+ * （別の場所での取り込み・上書きで、キャッシュが古いままにならないため）。
  * 固定した `hash` の内容は、現在の版と `hash` が同じときだけ返す（旧版の内容は保存していない）。
  */
+import { z } from 'zod';
 import { CompiledTourSchema } from '../../core/tour/index.ts';
 import {
   INDEX,
@@ -34,8 +37,25 @@ function importedTour(record: TourRecord): CatalogTour | null {
   return { tour: parsed.data, hash: record.hash, source: 'imported' };
 }
 
+const IdHashSchema = z.object({ id: z.string(), hash: z.string() });
+
 export function createCatalog(deps: CatalogDeps): CatalogPort {
-  let cache: Promise<CatalogEntry[]> | null = null;
+  /** `signature` は、組み立てたときの `tours` の `id` と `hash` の一覧。 */
+  let cache: { readonly signature: string; readonly entries: Promise<CatalogEntry[]> } | null = null;
+
+  /** `tours` の `id` と `hash` だけを集め、並べ順に依らない文字列にする。 */
+  async function readSignature(): Promise<string> {
+    const db = await deps.getDb();
+    const pairs: string[] = [];
+    await withTx(db, STORE.tours, 'readonly', (tx) =>
+      forEachCursor(tx.objectStore(STORE.tours).openCursor(), (cursor) => {
+        const parsed = IdHashSchema.safeParse(cursor.value);
+        pairs.push(parsed.success ? JSON.stringify([parsed.data.id, parsed.data.hash]) : 'invalid');
+        return true;
+      }),
+    );
+    return pairs.sort().join('\n');
+  }
 
   async function readImported(): Promise<CatalogTour[]> {
     const db = await deps.getDb();
@@ -72,16 +92,23 @@ export function createCatalog(deps: CatalogDeps): CatalogPort {
     return entries;
   }
 
-  function entries(): Promise<CatalogEntry[]> {
-    if (cache === null) {
-      const pending = build();
-      cache = pending;
-      // 失敗は残さず、次の呼び出しで組み立て直す
-      pending.catch(() => {
-        if (cache === pending) cache = null;
-      });
+  async function entries(): Promise<CatalogEntry[]> {
+    let signature: string | null;
+    try {
+      signature = await readSignature();
+    } catch {
+      signature = null;
     }
-    return cache;
+    // 読めなかったときは、あるキャッシュで続ける（無ければ組み立てて、その失敗を返す）
+    if (cache !== null && (signature === null || cache.signature === signature)) return cache.entries;
+    const pending = build();
+    const slot = { signature: signature ?? '', entries: pending };
+    cache = slot;
+    // 失敗は残さず、次の呼び出しで組み立て直す
+    pending.catch(() => {
+      if (cache === slot) cache = null;
+    });
+    return pending;
   }
 
   async function get(tourId: string): Promise<CatalogTour | null> {

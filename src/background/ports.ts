@@ -71,6 +71,13 @@ export interface TabsPort {
   isWithinOrigins(tour: Tour, tabId: number): Promise<boolean>;
   /** ページ側を組み込む。組み込む前に `isWithinOrigins` を確かめる。失敗したら false。 */
   inject(tour: Tour, tabId: number): Promise<boolean>;
+  /** 今のタブ（今のウィンドウの注目中のタブ）の ID。取れなければ null。 */
+  currentTabId(): Promise<number | null>;
+  /**
+   * 実行中のツアーを知らせる。実行中でなければ null。
+   * null の間は、ページ側の組み込みの再試行をしない。
+   */
+  setActiveTour(tour: Tour | null): void;
   /** 今のタブ／新しいタブで `url` を開き、そのタブ ID を返す。 */
   open(mode: 'current' | 'new', url: string): Promise<number | null>;
   /** タブとそのウィンドウを前面に出す。 */

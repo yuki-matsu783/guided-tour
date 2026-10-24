@@ -2,7 +2,7 @@
  * 画像のヘッダー検査のテスト（署名・寸法・上限・切れたヘッダー）。
  */
 import { describe, expect, it } from 'vitest';
-import { gif, jpeg, padTo, png, webpVp8, webpVp8l, webpVp8x } from './fixtures/builders.ts';
+import { gif, gifWithFrames, jpeg, padTo, png, webpVp8, webpVp8l, webpVp8x } from './fixtures/builders.ts';
 import { inspectImage } from './image.ts';
 import { PACKAGE_LIMITS } from './limits.ts';
 
@@ -101,5 +101,36 @@ describe('inspectImage の形式と寸法', () => {
     expect(inspectImage(longFill, 'jpeg').ok).toBe(false);
     const justInside = jpeg(10, 10, { segments: new Array<number>(PACKAGE_LIMITS.jpegScanMarkers - 10).fill(2) });
     expect(inspectImage(justInside, 'jpeg').ok).toBe(true);
+  });
+});
+
+describe('GIF の各フレームの寸法', () => {
+  it('R-B9: 論理画面が小さくても、フレームの寸法が上限を超えていれば拒否する', () => {
+    expect(inspectImage(gifWithFrames(1, 1, [[60000, 60000]]), 'gif').ok).toBe(false);
+    expect(inspectImage(gifWithFrames(1, 1, [[10, 10], [PACKAGE_LIMITS.imageSide + 1, 1]]), 'gif').ok).toBe(false);
+    expect(inspectImage(gifWithFrames(1, 1, [[4096, 4096]]), 'gif').ok).toBe(false);
+  });
+
+  it('R-B9: 上限の中のフレームだけなら通り、寸法は論理画面のまま', () => {
+    const result = inspectImage(gifWithFrames(40, 30, [[40, 30], [10, 10]]), 'gif');
+    expect(result.ok && [result.info.width, result.info.height]).toEqual([40, 30]);
+  });
+
+  it('R-B9: 途中で切れた GIF や、先頭のブロックが不明な GIF でも例外を出さない', () => {
+    const full = gifWithFrames(10, 10, [[10, 10]]);
+    for (let n = 13; n < full.length; n++) {
+      expect(() => inspectImage(full.subarray(0, n), 'gif')).not.toThrow();
+    }
+    expect(inspectImage(Uint8Array.from([...gif(10, 10), 0x99, 1, 2, 3]), 'gif').ok).toBe(true);
+  });
+
+  it('R-B9: 拡張ブロックのサブブロックを長さで飛ばし、その中身をフレームと取り違えない', () => {
+    const bytes = Uint8Array.from([...gif(10, 10), 0x21, 0xff, 3, 0x2c, 0x2c, 0x2c, 0, 0x3b]);
+    expect(inspectImage(bytes, 'gif').ok).toBe(true);
+  });
+
+  it('R-B9: フレームが多数あっても、走査はファイルの長さの範囲で終わる', () => {
+    const frames = Array.from({ length: 20000 }, () => [1, 1] as const);
+    expect(inspectImage(gifWithFrames(1, 1, frames), 'gif').ok).toBe(true);
   });
 });

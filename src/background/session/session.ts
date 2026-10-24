@@ -62,6 +62,7 @@ import type {
   SessionDeps,
   SessionResponse,
 } from './types.ts';
+import { ownValue } from './own.ts';
 import { compareVersions } from './version.ts';
 import { buildView } from './view.ts';
 
@@ -71,6 +72,8 @@ export interface Session {
   handlePage(msg: PageToBg, sender: PageSender): Promise<PageResponse>;
   onTabEvent(event: TabEvent): Promise<void>;
   onCatalogChanged(tourId: string, hash: string): Promise<void>;
+  /** 取り込み版の削除。同じ ID の同梱版が残っていても、上書きにはせず終了する。 */
+  onCatalogRemoved(tourId: string): Promise<void>;
   /** `permissions.onRemoved` で、実行中のツアーの権限が失われたとき。 */
   onPermissionLost(): Promise<void>;
   /** Service Worker 起動時の復帰（手順1〜4）。起動したらまず呼ぶ。 */
@@ -92,7 +95,7 @@ function pushOp(list: readonly OpId[], opId: OpId | undefined): OpId[] {
 }
 
 function findRole(state: TourState, tabId: number): string | undefined {
-  return Object.keys(state.tabs).find((role) => state.tabs[role]?.tabId === tabId);
+  return Object.entries(state.tabs).find(([, binding]) => binding.tabId === tabId)?.[0];
 }
 
 /** ツアーが使う役割（page ステップの役割と、`tabs` に宣言された役割）。 */
@@ -143,6 +146,8 @@ export function createSession(deps: SessionDeps): Session {
   /** 進捗の書き込みに失敗していて、次の確定でやり直す必要があるか。 */
   let progressDirty = false;
   let settingsMemo: Settings | null = null;
+  /** タブ管理へ最後に知らせた実行中のツアー（まだ知らせていなければ undefined）。 */
+  let announcedTour: Tour | null | undefined;
   /** 固定したツアーの内容（同じ `hash` の内容は変わらないので、実行回の間はメモリに持つ）。 */
   const pinnedCache = new Map<string, CatalogTour>();
   /** 処理した操作の応答（重複して届いたとき、同じ結果を返す）。 */
@@ -200,10 +205,9 @@ export function createSession(deps: SessionDeps): Session {
   async function evaluate(tour: Tour, st: TourState): Promise<TabEvaluation | null> {
     const step = tour.steps[st.stepIndex];
     if (step?.kind !== 'page') return null;
-    const roles: Record<string, RoleBinding> = {};
-    for (const [role, b] of Object.entries(st.tabs)) {
-      roles[role] = { tabId: b.tabId, documentId: b.documentId };
-    }
+    const roles: Record<string, RoleBinding> = Object.fromEntries(
+      Object.entries(st.tabs).map(([role, b]) => [role, { tabId: b.tabId, documentId: b.documentId }]),
+    );
     try {
       return await deps.tabs.evaluate(tour, step, roles);
     } catch (e) {
@@ -285,6 +289,20 @@ export function createSession(deps: SessionDeps): Session {
       }
     }
     state = { ...next, saveError: !ok };
+    // storage.session には、今回の進捗の結果を反映した値を残す（書き込み自体の成否は書けない）
+    if (state.saveError !== next.saveError) await store.writeState(state);
+  }
+
+  /** 実行中のツアーをタブ管理に知らせる（実行中でなければ null）。変わったときだけ呼ぶ。 */
+  async function announceTour(next: TourState): Promise<void> {
+    const active = next.status === 'running' ? ((await pinnedOf(next))?.tour ?? null) : null;
+    if (active === announcedTour) return;
+    announcedTour = active;
+    try {
+      deps.tabs.setActiveTour(active);
+    } catch (e) {
+      log.warn('error', errorFields(e, 'message'));
+    }
   }
 
   /** 計画した指示を送る。組み込みに失敗したら true。 */
@@ -308,7 +326,7 @@ export function createSession(deps: SessionDeps): Session {
 
   function windowIdOf(next: TourState, tour: Tour | null, evaluation: TabEvaluation | null): number | null {
     const step = pageStepOf(tour, next);
-    const binding = step === undefined ? undefined : next.tabs[step.tab];
+    const binding = step === undefined ? undefined : ownValue(next.tabs, step.tab);
     if (binding === undefined || evaluation === null) return next.windowId;
     return evaluation.candidates.find((c) => c.tabId === binding.tabId)?.windowId ?? next.windowId;
   }
@@ -346,6 +364,7 @@ export function createSession(deps: SessionDeps): Session {
     }
 
     await commit(next, spec);
+    await announceTour(next);
 
     const injectFailed = await perform(plan, tour);
     if (spec.extra !== undefined) await spec.extra();
@@ -426,12 +445,10 @@ export function createSession(deps: SessionDeps): Session {
   }): TourState | null {
     const step = a.entry.tour.steps[a.index];
     if (step === undefined) return null;
-    const tabs: TourState['tabs'] = {};
+    let tabs: TourState['tabs'] = {};
     if (a.carryTabs && a.prev !== null) {
       const roles = rolesOfTour(a.entry.tour);
-      for (const [role, binding] of Object.entries(a.prev.tabs)) {
-        if (roles.has(role)) tabs[role] = binding;
-      }
+      tabs = Object.fromEntries(Object.entries(a.prev.tabs).filter(([role]) => roles.has(role)));
     }
     return {
       status: 'running',
@@ -490,7 +507,7 @@ export function createSession(deps: SessionDeps): Session {
     let index = 0;
     let notice: Notice | null = null;
     if (resume) {
-      const saved = (await store.readProgress())?.[tourId];
+      const saved = (await store.readProgress())?.get(tourId);
       if (saved !== undefined) {
         const found = entry.tour.steps.findIndex((s) => s.id === saved.stepId);
         if (found >= 0) index = found;
@@ -644,15 +661,14 @@ export function createSession(deps: SessionDeps): Session {
     st: TourState,
     role: string,
     tabId: number,
-    opId: OpId,
+    opId: OpId | undefined,
   ): Promise<SessionResponse> {
-    const tabs: TourState['tabs'] = {};
-    for (const [r, b] of Object.entries(st.tabs)) {
-      if (r === role || b.tabId !== tabId) tabs[r] = b;
-    }
-    const current = st.tabs[role];
+    const current = ownValue(st.tabs, role);
     const same = current?.tabId === tabId;
-    tabs[role] = { tabId, documentId: same ? current.documentId : null };
+    const tabs: TourState['tabs'] = {
+      ...Object.fromEntries(Object.entries(st.tabs).filter(([r, b]) => r === role || b.tabId !== tabId)),
+      [role]: { tabId, documentId: same ? current.documentId : null },
+    };
     await finish({
       next: {
         ...st,
@@ -687,19 +703,39 @@ export function createSession(deps: SessionDeps): Session {
     const { st, tour } = c;
     const step: Step | undefined = pageStepOf(tour, st);
     if (step === undefined) return rejected('noPageStep');
-    const url = step.open ?? tour.tabs?.[step.tab]?.open;
+    const url = step.open ?? ownValue(tour.tabs, step.tab)?.open;
     if (url === undefined) return rejected('noOpenUrl');
     // タブ管理は開く URL の `origins` を確かめないので、ここで確かめる
     if (!urlWithinOrigins(tour, url)) return rejected('outsideOrigins');
-    // タブを開く作用は、対応付けを確定する前に行う（開けたタブの ID が確定の内容になるため）
-    let tabId: number | null;
-    try {
-      tabId = await deps.tabs.open(mode, url);
-    } catch {
-      tabId = null;
+    if (mode === 'current') {
+      // 今のタブが別の役割に対応付け済みなら、確認なしでは奪わない
+      const here = await deps.tabs.currentTabId().catch(() => null);
+      const owner = here === null ? undefined : findRole(st, here);
+      if (owner !== undefined && owner !== step.tab) return rejected('tabBoundToOtherRole');
     }
-    if (tabId === null) return rejected('openFailed');
-    return bindInto(st, step.tab, tabId, opId);
+    // 1回目の確定: この `opId` を処理済みにしてから開く（打ち切り後の再送で二重に開かないため）
+    const opened: { tabId: number | null } = { tabId: null };
+    await finish({
+      next: { ...st, recentOpIds: pushOp(st.recentOpIds, opId) },
+      display: 'none',
+      progress: 'none',
+      extra: async () => {
+        try {
+          opened.tabId = await deps.tabs.open(mode, url);
+        } catch {
+          opened.tabId = null;
+        }
+      },
+    });
+    if (opened.tabId === null) {
+      const res = rejected('openFailed');
+      rememberResult(opId, res);
+      return res;
+    }
+    // 2回目の確定: 開けたタブを役割に対応付ける
+    const after = state;
+    if (after?.status !== 'running' || after.sessionId !== st.sessionId) return DONE;
+    return bindInto(after, step.tab, opened.tabId, undefined);
   }
 
   async function focusRole(opId: OpId): Promise<SessionResponse> {
@@ -708,7 +744,7 @@ export function createSession(deps: SessionDeps): Session {
     const { st, tour } = c;
     const step = pageStepOf(tour, st);
     if (step === undefined) return rejected('noPageStep');
-    const binding = st.tabs[step.tab];
+    const binding = ownValue(st.tabs, step.tab);
     if (binding === undefined) return rejected('notBound');
     await finish({
       next: { ...st, recentOpIds: pushOp(st.recentOpIds, opId) },
@@ -790,8 +826,25 @@ export function createSession(deps: SessionDeps): Session {
       return;
     }
     if (hash === st.hash) return;
-    if (st.status === 'paused' && st.pauseReason === 'overwritten') return;
+    if (st.status === 'paused') {
+      if (st.pauseReason === 'overwritten') return;
+      // 利用者・許可の取り消しで一時中断中でも、上書きされたら理由を改める（一時中断のまま）
+      log.info('session.pause', { reason: 'overwritten' });
+      await finish({
+        next: { ...st, pauseReason: 'overwritten' },
+        display: 'plan',
+        progress: 'none',
+      });
+      return;
+    }
     await pauseWith('overwritten');
+  }
+
+  async function catalogRemoved(tourId: string): Promise<void> {
+    await ensureLoaded();
+    const st = state;
+    if (st === null || st.status === 'ended' || st.tourId !== tourId) return;
+    await endRun(st, 'removed');
   }
 
   // ---- ページ側からの受け付け ----
@@ -805,7 +858,7 @@ export function createSession(deps: SessionDeps): Session {
     }
     const pinned = await pinnedOf(st);
     const step = pageStepOf(pinned?.tour ?? null, st);
-    const binding = step === undefined ? undefined : st.tabs[step.tab];
+    const binding = step === undefined ? undefined : ownValue(st.tabs, step.tab);
     if (
       binding?.tabId !== sender.tabId ||
       binding.documentId === null ||
@@ -824,7 +877,7 @@ export function createSession(deps: SessionDeps): Session {
       return discard('senderMismatch');
     }
     const role = findRole(st, sender.tabId);
-    const known = role === undefined ? undefined : st.tabs[role];
+    const known = role === undefined ? undefined : ownValue(st.tabs, role);
     if (role === undefined || known === undefined) return discard('senderMismatch');
     const changedDocument = known.documentId !== null && known.documentId !== sender.documentId;
     const next: TourState = {
@@ -970,7 +1023,7 @@ export function createSession(deps: SessionDeps): Session {
       progressDirty = true;
       return;
     }
-    const saved = map[st.tourId];
+    const saved = map.get(st.tourId);
     if (saved?.sessionId !== st.sessionId || saved.gen < st.gen) {
       progressDirty = !(await store.saveProgress(st, deps.now()));
     }
@@ -1051,7 +1104,7 @@ export function createSession(deps: SessionDeps): Session {
       return;
     }
     const role = findRole(st, e.tabId);
-    const binding = role === undefined ? undefined : st.tabs[role];
+    const binding = role === undefined ? undefined : ownValue(st.tabs, role);
     if (role === undefined || binding === undefined) return;
     const running = st.status === 'running';
     const pinned = running ? await pinnedOf(st) : null;
@@ -1110,6 +1163,7 @@ export function createSession(deps: SessionDeps): Session {
     handlePage,
     onTabEvent: (e) => enqueue(() => tabEvent(e)),
     onCatalogChanged: (tourId, hash) => enqueue(() => catalogChanged(tourId, hash)),
+    onCatalogRemoved: (tourId) => enqueue(() => catalogRemoved(tourId)),
     onPermissionLost: () =>
       enqueue(async () => {
         await ensureLoaded();

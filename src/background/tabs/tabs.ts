@@ -16,6 +16,7 @@ import type {
   TabEvent,
   TabsPort,
 } from '../ports.ts';
+import { ownValue } from '../session/own.ts';
 import type { NavigationDetails, TabLike, TabsDeps } from './types.ts';
 
 /** 遷移検知のデバウンス（タブごと）。 */
@@ -57,8 +58,8 @@ export function createTabs(deps: TabsDeps): TabsPort {
   const pending = new Map<number, Pending>();
   /** ページ側の組み込みに失敗したタブ。組み込みに成功するか、タブが閉じられるまで残る。 */
   const injectFailed = new Set<number>();
-  /** 再試行のために、最後に判定・組み込みを依頼されたツアーを覚える。 */
-  let lastTour: Tour | null = null;
+  /** 組み込みの再試行に使う、実行中のツアー。状態管理が知らせる。null の間は再試行しない。 */
+  let activeTour: Tour | null = null;
 
   function emit(event: TabEvent): void {
     for (const listener of [...listeners]) {
@@ -100,7 +101,6 @@ export function createTabs(deps: TabsDeps): TabsPort {
   }
 
   async function inject(tour: Tour, tabId: number): Promise<boolean> {
-    lastTour = tour;
     if (!(await isWithinOrigins(tour, tabId)) || !(await hasPermission(tour))) {
       injectFailed.add(tabId);
       return false;
@@ -162,13 +162,12 @@ export function createTabs(deps: TabsDeps): TabsPort {
     step: Step,
     roles: Readonly<Record<string, RoleBinding>>,
   ): Promise<TabEvaluation> {
-    lastTour = tour;
     const role = step.tab;
     if (step.kind === 'guide') {
       return { role, status: 'ok', selected: true, attended: true, candidates: [], focusedCandidate: null };
     }
-    const cond = step.url ?? tour.tabs?.[role]?.url;
-    const binding = roles[role];
+    const cond = step.url ?? ownValue(tour.tabs, role)?.url;
+    const binding = ownValue(roles, role);
     const tab = binding === undefined ? null : await getTab(binding.tabId);
     if (binding === undefined || tab === null) {
       const found = await candidatesFor(tour, role, cond, roles);
@@ -202,6 +201,19 @@ export function createTabs(deps: TabsDeps): TabsPort {
     } catch {
       return null;
     }
+  }
+
+  async function currentTabId(): Promise<number | null> {
+    try {
+      const [current] = await deps.tabs.query({ active: true, lastFocusedWindow: true });
+      return current?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  function setActiveTour(tour: Tour | null): void {
+    activeTour = tour;
   }
 
   async function focus(tabId: number): Promise<void> {
@@ -256,8 +268,8 @@ export function createTabs(deps: TabsDeps): TabsPort {
   async function flush(tabId: number, kinds: Set<NavigationKind>): Promise<void> {
     for (const kind of NAVIGATION_ORDER) {
       if (!kinds.has(kind)) continue;
-      if (kind === 'completed' && injectFailed.has(tabId) && lastTour !== null) {
-        await inject(lastTour, tabId);
+      if (kind === 'completed' && injectFailed.has(tabId) && activeTour !== null) {
+        await inject(activeTour, tabId);
       }
       emit({ kind, tabId });
     }
@@ -304,6 +316,8 @@ export function createTabs(deps: TabsDeps): TabsPort {
     evaluate,
     isWithinOrigins,
     inject,
+    currentTabId,
+    setActiveTour,
     open,
     focus,
     send,
