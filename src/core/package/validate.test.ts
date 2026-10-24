@@ -249,7 +249,8 @@ describe('validatePackage の data URL・外部 URL・単体 YAML', () => {
     expect(pack(yamlWith(dataUrl('image/gif', gif(5, 5))), null).ok).toBe(true);
     expect(pack(yamlWith(dataUrl('image/webp', webpVp8(5, 5))), null).ok).toBe(true);
     expect(pack(yamlWith(dataUrl('image/png', padTo(png(5, 5), 5 * 1024 * 1024 + 1))), null).ok).toBe(false);
-  });
+    // 5 MB を超える data URL を YAML に埋めて解析するので重い。ほかの重いテストと同じ時間切れにする
+  }, 30_000);
 
   it('T-PKG-57: 画像でない data URL はエラーになる', () => {
     for (const src of [

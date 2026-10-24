@@ -1105,7 +1105,11 @@ export function createSession(deps: SessionDeps): Session {
     }
     const role = findRole(st, e.tabId);
     const binding = role === undefined ? undefined : ownValue(st.tabs, role);
-    if (role === undefined || binding === undefined) return;
+    if (role === undefined || binding === undefined) {
+      // 役割のタブが無い間は、条件に合うタブの増減や移動で「既存のタブから選ぶ」の一覧が変わるので、パネルへ通知する
+      if (st.status === 'running' && st.tabStatus?.status === 'missing') await notify();
+      return;
+    }
     const running = st.status === 'running';
     const pinned = running ? await pinnedOf(st) : null;
     const isCurrent = pageStepOf(pinned?.tour ?? null, st)?.tab === role;
@@ -1142,6 +1146,8 @@ export function createSession(deps: SessionDeps): Session {
             }
           },
         });
+        return;
+      case 'changed':
         return;
       case 'historyStateUpdated':
         if (!running || !isCurrent) return;

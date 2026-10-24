@@ -1,6 +1,8 @@
 /**
  * ページ側の起動。バックグラウンドからのメッセージを検証して実行器へ渡し、起動時に HELLO を送る。
- * 同じ文書に二重に組み込まれても、動くのは最初の1つだけ（`window` に置く印で見分ける）。
+ * 同じ文書に二重に組み込まれても、動く実行器は最初の1つだけ（`window` に置く印で見分ける）。
+ * 2回目以降の組み込みは実行器を作らず、HELLO だけ送り直す。バックグラウンドが文書 ID を記録し直して、
+ * すでに動いている実行器へ描画指示を送れるようにするため（ツアーの終了後に同じタブで開始し直すと、組み込みだけが再び走る）。
  * 印は二重の起動を避けるための判定にだけ使い、他の用途には使わない。
  */
 import { defaultEnv, locate } from '../core/locator/index.ts';
@@ -34,12 +36,9 @@ export interface BootstrapDeps {
   createLevel: () => () => Level;
 }
 
-/** 起動したら true。すでに動いているときは何もせず false。 */
+/** 起動したら true。すでに動いているときは HELLO だけ送り直して false。 */
 export function startContent(deps: BootstrapDeps): boolean {
   const { win, runtime } = deps;
-  if (Reflect.get(win, MARK_KEY) === true) return false;
-  Reflect.set(win, MARK_KEY, true);
-
   const sendRaw = (message: unknown): void => {
     try {
       void Promise.resolve(runtime.sendMessage(message)).catch(() => undefined);
@@ -47,6 +46,12 @@ export function startContent(deps: BootstrapDeps): boolean {
       // 受け手がいなくてもページ側は止めない
     }
   };
+  if (Reflect.get(win, MARK_KEY) === true) {
+    sendRaw({ type: 'HELLO' } satisfies PageToBg);
+    return false;
+  }
+  Reflect.set(win, MARK_KEY, true);
+
   const send = (message: PageToBg): void => {
     sendRaw(message);
   };

@@ -2,8 +2,10 @@
 export { createTabs, DEBOUNCE_MS } from './tabs.ts';
 export type {
   CommandsApi,
+  CreatedTab,
   NavigationDetails,
   ScriptingApi,
+  TabChangeInfo,
   TabLike,
   TabsApi,
   TabsDeps,

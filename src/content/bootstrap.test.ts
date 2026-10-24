@@ -48,9 +48,18 @@ describe('起動', () => {
     const createLevel = vi.fn(() => () => 'warn' as const);
     expect(startContent({ win: window, runtime: rt.api, createLevel })).toBe(true);
     expect(startContent({ win: window, runtime: rt.api, createLevel })).toBe(false);
-    expect(rt.sent).toHaveLength(1);
     expect(rt.listeners).toHaveLength(1);
     expect(createLevel).toHaveBeenCalledTimes(1);
+  });
+
+  it('二重に組み込まれたときは、HELLO を送り直し、実行器は増やさない（すでに動いている実行器が描画指示を受けられる）', () => {
+    const rt = fakeRuntime();
+    const createLevel = () => () => 'warn' as const;
+    startContent({ win: window, runtime: rt.api, createLevel });
+    startContent({ win: window, runtime: rt.api, createLevel });
+    expect(rt.sent).toEqual([{ type: 'HELLO' }, { type: 'HELLO' }]);
+    deliver(rt.listeners[0], JSON.parse(JSON.stringify(makeRender({ rev: rev(1), selected: false }))));
+    expect(document.querySelectorAll(`[${OWN_HOST_ATTRIBUTE}]`)).toHaveLength(1);
   });
 
   it('PING には応答し、検証を通らないメッセージは実行器へ渡さない', () => {

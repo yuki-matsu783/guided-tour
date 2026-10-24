@@ -27,6 +27,17 @@ export interface NavigationDetails {
   frameId: number;
 }
 
+/** `tabs.onUpdated` の変化のうち、ここで使う項目。 */
+export interface TabChangeInfo {
+  url?: string | undefined;
+  status?: string | undefined;
+}
+
+/** `tabs.onCreated` が渡すタブのうち、ここで使う項目。 */
+export interface CreatedTab {
+  id?: number | undefined;
+}
+
 export interface TabsApi {
   get(tabId: number): Promise<TabLike>;
   query(query: { active?: boolean; lastFocusedWindow?: boolean }): Promise<TabLike[]>;
@@ -34,6 +45,8 @@ export interface TabsApi {
   update(tabId: number, properties: { url?: string; active?: boolean }): Promise<TabLike | undefined>;
   sendMessage(tabId: number, message: unknown, options?: { frameId: number }): Promise<unknown>;
   onActivated: EventSource<[unknown]>;
+  onCreated: EventSource<[CreatedTab]>;
+  onUpdated: EventSource<[number, TabChangeInfo, unknown]>;
   onRemoved: EventSource<[number, unknown]>;
 }
 

@@ -60,6 +60,8 @@ export interface TabEvaluation {
 export type TabEvent =
   | { readonly kind: 'activated' | 'focusChanged' }
   | { readonly kind: 'removed'; readonly tabId: number }
+  /** タブの作成、URL・読み込み状態の変化。役割に対応付けていないタブの候補の更新に使う。 */
+  | { readonly kind: 'changed'; readonly tabId: number }
   | { readonly kind: 'committed'; readonly tabId: number }
   | { readonly kind: 'historyStateUpdated'; readonly tabId: number }
   | { readonly kind: 'completed'; readonly tabId: number };

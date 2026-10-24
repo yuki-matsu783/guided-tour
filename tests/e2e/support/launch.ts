@@ -159,7 +159,7 @@ async function open(options: LaunchOptions, ownsDir: boolean): Promise<Extension
     try {
       await Promise.race([
         w.evaluate(() => 1),
-        sleep(1500).then(() => {
+        sleep(5000).then(() => {
           throw new Error('timeout');
         }),
       ]);

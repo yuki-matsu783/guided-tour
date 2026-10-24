@@ -121,7 +121,6 @@ test('E-03: ツアーを完了・終了したあとは、どのタブにも表�
     await sleep(2500);
     expect(await ui.hostCount()).toBe(0);
     expect(await recorder.take()).toEqual([]);
-    await tab.reload();
 
     // 対象サイトと他のサイトの、複数の新しいタブ
     const others = [

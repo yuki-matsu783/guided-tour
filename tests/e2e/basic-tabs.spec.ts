@@ -187,7 +187,6 @@ test('E-17: 案内対象のタブを閉じて、既存タブの選択でも「�
 
   // (a) 条件に合うタブを開き直して、既存タブとして選ぶ
   const reopened = await openTab(server.url('/internal/'));
-  await panel.recheck();
   await panel.useTab();
   await expectMiniGuideStep(ownUi(reopened), '2/4');
   await expectPanelStep(panel, '2/4');

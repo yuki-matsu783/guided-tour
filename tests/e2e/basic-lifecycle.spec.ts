@@ -71,8 +71,6 @@ test('E-22: 終了したあと、同じタブで（再読み込みせずに）�
   openTab,
   openPanel,
 }) => {
-  // 製品の不具合で落ちる想定のケース。ページ側が二重に組み込まれたと判断して HELLO を送り直さないため、
-  // 2 回目の開始ではページ上に何も出ない
   const tab = await openTab(server.url('/internal/'));
   const panel = await openPanel();
   const ui = ownUi(tab);
@@ -165,8 +163,6 @@ test('E-25: ツアー A で権限を得たサイトでも、origins に含まな
   await expectMiniGuideStep(ownUi(tab), '1/4');
   expect((await ext.permissions()).origins).toContain('http://127.0.0.1/*');
   await panel.stop();
-  // 同じ文書のままだと 2 回目の開始でページ上に表示が出ない不具合がある（E-22 の別ケース）ので、再読み込みしておく
-  await tab.reload();
 
   // ツアー B を実行し、127.0.0.1 のページを開く
   await beginTour(panel, tourB.name, tab);

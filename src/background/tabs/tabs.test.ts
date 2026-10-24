@@ -85,6 +85,8 @@ interface Env {
     activated: () => void;
     focusChanged: () => void;
     removed: (tabId: number) => void;
+    created: (tabId: number) => void;
+    updated: (tabId: number, change: { url?: string; status?: string }) => void;
     committed: (d: NavigationDetails) => void;
     history: (d: NavigationDetails) => void;
     completed: (d: NavigationDetails) => void;
@@ -101,6 +103,8 @@ function makeEnv(initial: TabLike[]): Env {
   const granted = { value: true };
   const onActivated = emitter<[unknown]>();
   const onRemoved = emitter<[number, unknown]>();
+  const onCreated = emitter<[{ id?: number | undefined }]>();
+  const onUpdated = emitter<[number, { url?: string | undefined; status?: string | undefined }, unknown]>();
   const onFocusChanged = emitter<[number]>();
   const onCommitted = emitter<[NavigationDetails]>();
   const onHistory = emitter<[NavigationDetails]>();
@@ -138,6 +142,8 @@ function makeEnv(initial: TabLike[]): Env {
       sendMessage,
       onActivated,
       onRemoved,
+      onCreated,
+      onUpdated,
     },
     windows: {
       get: (id) => Promise.resolve({ focused: focusedWindows.has(id) }),
@@ -170,6 +176,12 @@ function makeEnv(initial: TabLike[]): Env {
       },
       removed: (id) => {
         onRemoved.fire(id, {});
+      },
+      created: (id) => {
+        onCreated.fire({ id });
+      },
+      updated: (id, change) => {
+        onUpdated.fire(id, change, {});
       },
       committed: (d) => {
         onCommitted.fire(d);
@@ -552,6 +564,20 @@ describe('イベント', () => {
     vi.advanceTimersByTime(1000);
     expect(events).toEqual([{ kind: 'removed', tabId: 1 }]);
     expect(env.create).not.toHaveBeenCalled();
+  });
+
+  it('タブの作成と、URL・読み込み状態の変化が changed として待たずに流れる（タイトルなど他の変化は流れない）', () => {
+    const env = makeEnv([]);
+    const { events } = collect(env);
+    env.fire.created(5);
+    env.fire.updated(5, { url: 'https://a.example/app' });
+    env.fire.updated(5, { status: 'complete' });
+    env.fire.updated(5, {});
+    expect(events).toEqual([
+      { kind: 'changed', tabId: 5 },
+      { kind: 'changed', tabId: 5 },
+      { kind: 'changed', tabId: 5 },
+    ]);
   });
 
   it('解除した受け手には流れない', () => {

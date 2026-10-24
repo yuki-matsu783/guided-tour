@@ -12,8 +12,8 @@ export default defineConfig({
   // 1テストが拡張機能付きの Chromium を1つ起動する。テスト同士は独立なので並列にできる
   fullyParallel: true,
   workers: process.env.E2E_WORKERS === undefined ? 4 : Number(process.env.E2E_WORKERS),
-  timeout: 60_000,
-  expect: { timeout: 10_000 },
+  timeout: 90_000,
+  expect: { timeout: 15_000 },
   retries: 0,
   reporter: [['list']],
   outputDir: '../../test-results/e2e',

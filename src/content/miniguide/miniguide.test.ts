@@ -421,6 +421,24 @@ describe('幅の変更', () => {
     expect(width(s)).toBe(240);
   });
 
+  it('T-MG-25: 送った幅の描画指示が遅れて返っても、手元の新しい幅を古い値で上書きしない。別の値が来たら置き換える', () => {
+    const s = setup();
+    s.mg.renderMiniGuide(MODEL, UI);
+    const handle = q(s, '.handle');
+    key(handle, 'ArrowLeft');
+    key(handle, 'ArrowLeft');
+    key(handle, 'ArrowLeft');
+    s.mg.renderMiniGuide(MODEL, { ...UI, width: 336 });
+    expect(width(s)).toBe(368);
+    key(handle, 'ArrowLeft');
+    s.mg.renderMiniGuide(MODEL, { ...UI, width: 352 });
+    s.mg.renderMiniGuide(MODEL, { ...UI, width: 368 });
+    s.mg.renderMiniGuide(MODEL, { ...UI, width: 384 });
+    expect(width(s)).toBe(384);
+    s.mg.renderMiniGuide(MODEL, { ...UI, width: 280 });
+    expect(width(s)).toBe(280);
+  });
+
   it('T-MG-28: 範囲外の width を受け取ったとき、範囲内に収めて表示する', () => {
     const s = setup();
     s.mg.renderMiniGuide(MODEL, { ...UI, width: 100 });

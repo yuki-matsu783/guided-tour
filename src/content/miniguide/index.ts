@@ -162,7 +162,11 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
     for (const listener of Array.from(rectListeners)) listener();
   }
 
+  /** 送ったが、まだ描画指示で返ってきていない設定。返ってきた古い値で、手元の新しい値を上書きしないために持つ。 */
+  let pendingUi: { mode: UiMode; width: number }[] = [];
+
   function sendUi(): void {
+    pendingUi = [...pendingUi, { mode, width }].slice(-64);
     deps.send({ type: 'SET_UI', mode, width });
   }
 
@@ -434,7 +438,15 @@ export function createMiniGuide(deps: MiniGuideDeps): MiniGuide {
         remove();
         return;
       }
-      const uiChanged = lastUi?.mode !== ui.mode || lastUi.width !== ui.width;
+      let uiChanged = lastUi?.mode !== ui.mode || lastUi.width !== ui.width;
+      // 自分が送った設定の反映なら、手元の値（連続した操作で先へ進んでいることがある）を保つ
+      const echoed = pendingUi.findIndex((p) => p.mode === ui.mode && p.width === ui.width);
+      if (uiChanged && echoed >= 0) {
+        pendingUi = pendingUi.slice(echoed + 1);
+        uiChanged = false;
+      } else if (uiChanged) {
+        pendingUi = [];
+      }
       if (uiChanged) {
         mode = ui.mode;
         width = clampWidth(ui.width);

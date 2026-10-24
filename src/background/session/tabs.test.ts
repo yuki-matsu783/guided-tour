@@ -318,6 +318,25 @@ describe('タブが閉じられたとき', () => {
     expect(env.tabs.sent).toEqual([]);
   });
 
+  it('役割のタブが無い間は、役割に対応付けていないタブの変化・閉鎖でパネルへ通知する。無いときは通知しない', async () => {
+    const env = await running();
+    await env.session.onTabEvent({ kind: 'removed', tabId: ROLE_TAB });
+    env.tabs.evaluateImpl = () => ({ status: 'missing', selected: false, attended: false });
+    await env.session.onTabEvent({ kind: 'activated' });
+    const before = env.panels.length;
+    await env.session.onTabEvent({ kind: 'changed', tabId: 77 });
+    await env.session.onTabEvent({ kind: 'removed', tabId: 78 });
+    expect(env.panels.length).toBe(before + 2);
+    expect(env.tabs.sent.filter((r) => r.message.type === 'RENDER')).toEqual([]);
+  });
+
+  it('役割のタブがあるときは、役割に対応付けていないタブの変化で通知しない', async () => {
+    const env = await running();
+    const before = env.panels.length;
+    await env.session.onTabEvent({ kind: 'changed', tabId: 77 });
+    expect(env.panels.length).toBe(before);
+  });
+
   it('T-TAB-64: 閉じた後、別のタブを対応付けたとき、同じステップから続けられる', async () => {
     const env = await running();
     await env.session.onTabEvent({ kind: 'removed', tabId: ROLE_TAB });

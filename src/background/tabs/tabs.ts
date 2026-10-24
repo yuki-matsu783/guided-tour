@@ -304,6 +304,12 @@ export function createTabs(deps: TabsDeps): TabsPort {
   deps.windows.onFocusChanged.addListener(() => {
     emit({ kind: 'focusChanged' });
   });
+  deps.tabs.onCreated.addListener((tab) => {
+    if (tab.id !== undefined) emit({ kind: 'changed', tabId: tab.id });
+  });
+  deps.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.url !== undefined || changeInfo.status !== undefined) emit({ kind: 'changed', tabId });
+  });
   deps.tabs.onRemoved.addListener((tabId) => {
     const timer = pending.get(tabId);
     if (timer !== undefined) clearTimeout(timer.timer);

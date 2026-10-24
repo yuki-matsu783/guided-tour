@@ -14,7 +14,7 @@
  * - `panel.next()` / `prev()` / `finish()` / `gotoStep(n)`: 実行中の画面の移動（`gotoStep` は 1 始まりの番号）。
  * - `panel.pause()` / `stop()` / `resumePaused()` / `restartPaused()`: 一時中断・終了・再開・最初からやり直し。
  * - `panel.useTab(pattern?)` / `openHere()` / `openNew()` / `focusRole()` / `recheck()`: タブの操作。`useTab` は「〜として使う」の先頭（`pattern` で選べる）。
- *   既存タブの一覧は、タブを開いたあとに自動では更新されないので、`recheck()`（再確認）で取り直す。
+ *   既存タブの一覧は、役割のタブが無い間はタブの作成・移動・閉鎖で自動で更新される。`recheck()`（再確認）で取り直すこともできる。
  * - `panel.heading()` / `panel.stepBadge()` / `panel.hintText()` / `panel.notice()`: 画面の文言の読み取り。
  * - `panel.openSettings()` / `panel.setMiniGuideHidden(bool)` / `panel.backToList()`: 設定。
  * - `panel.confirm()` / `panel.cancel()`: 確認の画面（上書き・付け替え・削除・消去）。
