@@ -81,4 +81,17 @@ describe('起動', () => {
     deliver(listener, { type: 'CLEAR', rev: 2 });
     expect(document.querySelector(`[${OWN_HOST_ATTRIBUTE}]`)).toBeNull();
   });
+
+  it('R-SWEEP-03: 経過時間は壁時計（Date.now）ではなく単調な時計で測る（時計の巻き戻しの影響を受けない）', () => {
+    const wall = vi.spyOn(Date, 'now');
+    try {
+      const rt = fakeRuntime();
+      startContent({ win: window, runtime: rt.api, createLevel: () => () => 'warn' });
+      deliver(rt.listeners[0], JSON.parse(JSON.stringify(makeRender({ rev: rev(1), selected: false }))));
+      expect(document.querySelectorAll(`[${OWN_HOST_ATTRIBUTE}]`)).toHaveLength(1);
+      expect(wall).not.toHaveBeenCalled();
+    } finally {
+      wall.mockRestore();
+    }
+  });
 });

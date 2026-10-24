@@ -125,10 +125,11 @@ export function RunningScreen({ onOpenList, onOpenSettings }: ScreenNav): ReactN
   const isGuide = summary?.kind === 'guide';
   const tab = view.tabStatus;
   const role = tab?.role ?? step?.tab ?? '';
-  const roleLabel = view.roles.some((r) => r.id === role)
-    ? roleLabelOf(view.roles, role)
-    : (content?.tabs?.[role]?.label ?? role);
-  const openUrl = step?.open ?? content?.tabs?.[role]?.open;
+  // 役割名は継承されたプロパティ（constructor など）と衝突するので、自分のプロパティだけを読む
+  const contentTabs = content?.tabs;
+  const roleTab = contentTabs !== undefined && Object.hasOwn(contentTabs, role) ? contentTabs[role] : undefined;
+  const roleLabel = view.roles.some((r) => r.id === role) ? roleLabelOf(view.roles, role) : (roleTab?.label ?? role);
+  const openUrl = step?.open ?? roleTab?.open;
   const canOpen = content == null || openUrl !== undefined;
 
   return (

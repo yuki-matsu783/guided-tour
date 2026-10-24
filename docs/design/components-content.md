@@ -11,7 +11,7 @@ keywords: [content script, overlay, miniguide]
 ## ステップ実行器（content/runtime）
 
 - 役割：描画指示を受け、1つのステップの探索・追従・再検証・目安の監視・表示を、ライフサイクルに沿って管理する。
-- 使い方：`RENDER{sessionId, gen, pageSeq, rev, step, index, total, overlay, ui, selected, attended, donePage}` を受け取る。`rev` が受け取った最大値より小さければ捨てる。`(sessionId, gen, pageSeq)` が今と同じなら、表示の状態（overlay・ui・selected・attended）だけを更新する。違えば、今の処理をすべて止めてから始め直す。
+- 使い方：バックグラウンドからの描画指示（RENDER）を受け取る。メッセージの形は `src/shared/messages/`。コードは `src/content/runtime/`。`rev` が受け取った最大値より小さければ捨てる。`(sessionId, gen, pageSeq)` が今と同じなら、表示の状態（overlay・ui・selected・attended）だけを更新する。違えば、今の処理をすべて止めてから始め直す。
 - 実行の許可：`selected` が偽のときは、探索・監視・追従をすべて止める（`document.visibilityState` には頼らない）。真に戻ったら、すぐに1回探索する。
 - 処理のトークン：非同期の処理（探索・判定）は、開始時の `(sessionId, gen, pageSeq, rev)` を持ち、完了時に現在の値と一致しなければ結果を捨てる。
 - ライフサイクル：
@@ -48,7 +48,7 @@ keywords: [content script, overlay, miniguide]
 ## ハイライト・吹き出し（content/overlay）
 
 - 役割：ハイライト（枠と4枚の減衰板）、吹き出し、表示を戻すボタン（ミニガイドを使わない設定のときだけ）を、閉じた Shadow DOM の中に描く。
-- 使い方：`paint(highlightEl, step, overlay, hint, miniGuideRect)`、`clear()`。
+- 使い方：ハイライトの対象・ステップ・表示の設定・完了の目安の状態・ミニガイドの領域を渡すと、枠・吹き出し・減衰板を描く。消す操作もある。コードは `src/content/overlay/`。
 - 動き：
   - 減衰板と枠は `pointer-events: none` にする。減衰板は、ミニガイドの領域を覆わない
   - 吹き出しには、`title`・`tip`（強調・コードのみ）・目安の状態を textContent で描く。配置は、表示領域からミニガイドの領域（展開時は幅、最小化時はバーの幅）を除いた範囲で、対象の下、上、左の順に収まる位置を選ぶ
@@ -59,7 +59,7 @@ keywords: [content script, overlay, miniguide]
 ## ミニガイド（content/miniguide）
 
 - 役割：ページの右端に、小さな案内領域を、閉じた Shadow DOM の中に描く。
-- 使い方：`renderMiniGuide(model, ui)`。`model` はステップ番号・総数・見出し・`tip`・目安の状態・文章だけの案内の文・最終ステップかどうか・ページ上の表示が消えているか。`ui` は `{ enabled, mode, width }`。
+- 使い方：ステップ番号・総数・見出し・`tip`・目安の状態・文章だけの案内の文・最終ステップかどうか・ページ上の表示が消えているか、と、ミニガイドの設定（表示するか・表示状態・幅）を渡すと、描く。コードは `src/content/miniguide/`。
 - 表示する条件：`ui.enabled` が真で、描画指示が届いていること（描画指示は、現在のステップの役割のタブが URL 条件に合うときか、完了ページのときにだけ送られる）。
 - 表示状態：
 
@@ -70,5 +70,6 @@ keywords: [content script, overlay, miniguide]
   | ホバー | バーを表示し、`pointerenter`・`focusin` で展開する。`pointerleave`・`focusout` から300ミリ秒後にバーに戻る |
 
 - 操作：「戻る」「次へ（完了）」は `GOTO{to, sessionId, gen, opId}`、「対象を表示」は `SCROLL_TO_TARGET`、「表示を戻す」は `SET_OVERLAY{hidden: false}`、表示状態と幅の変更は `SET_UI{mode, width}` を送る（幅はドラッグを離したときに1回だけ送る）。すべて `isTrusted` が真のイベントに限る。
+- 移動の操作の受け付け：移動を送ったら、新しいステップの表示が届くまで次の移動を送らない。表示が届いてから一定時間（値は時間の表）も移動を受け付けない。
 - サイドパネルを開く方法として、ショートカットキーの案内を表示する（キーは `chrome.commands.getAll` で取得した実際の割り当てをバックグラウンドから受け取る）。
 - 頼るもの：なし

@@ -185,14 +185,14 @@ describe('手間の上限', () => {
     const pattern = ['**', 'a', '*', '**', 'a', '*', '**', 'a', '**', 'a', ...Array<string>(10).fill('a'), 'b'];
     const segments = Array<string>(256).fill('a');
     const stats = { steps: 0 };
-    const started = performance.now();
     expect(matchGlobSegments(pattern, segments, stats)).toBe(false);
     expect(stats.steps).toBeLessThanOrEqual(pattern.length * segments.length);
-    expect(performance.now() - started).toBeLessThan(500);
-    // matchUrl を通しても、固定の時間内に終わる
-    const startedUrl = performance.now();
+    // matchUrl が使うのと同じ形のパターンも、手間の回数が区間数の積に収まり、一致しない
+    const urlPattern = ['**', 'a', '**', 'a', '**', 'a', '**', 'b'];
+    const urlStats = { steps: 0 };
+    expect(matchGlobSegments(urlPattern, Array<string>(256).fill('a'), urlStats)).toBe(false);
+    expect(urlStats.steps).toBeLessThanOrEqual(urlPattern.length * 256);
     expect(matchUrl(glob('/**/a/**/a/**/a/**/b'), deep(256))).toBe(false);
-    expect(performance.now() - startedUrl).toBeLessThan(500);
   });
 
   it('T-URL-26: 257区間以上の URL は、パターンの形によらず一致しない', () => {

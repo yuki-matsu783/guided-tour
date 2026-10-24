@@ -456,3 +456,39 @@ describe('移動の直後の操作の受け付け', () => {
     expect(gotos(deps)).toBe(2);
   });
 });
+
+describe('役割の表示名（自分のプロパティだけを読む）', () => {
+  it('R-SWEEP-01: ツアー内容に無い役割（constructor など Object の名前）は、継承されたプロパティを読まず、ID をそのまま出す', async () => {
+    const view = runningView({
+      roles: [],
+      tabStatus: {
+        role: 'constructor',
+        status: 'missing',
+        candidates: [{ tabId: 5, title: '別のタブ', windowId: 1, boundRole: null }],
+        attended: false,
+        selected: false,
+      },
+    });
+    const deps = withBundled(makeDeps(view));
+    deps.getActiveTabId = () => Promise.resolve(null);
+    const { container } = await mount(<App deps={deps} />);
+    await flush(10);
+    await wait(150);
+    expect(textOf(container)).toContain('本文');
+    // 内容を読み終えたあとで Object.prototype に label を足し、描き直させる
+    Object.defineProperty(Object.prototype, 'label', { value: '継承された名前', configurable: true });
+    try {
+      const next = { ...view, overlayHidden: true };
+      deps.state.view = next;
+      act(() => {
+        deps.emit({ type: 'TOUR_STATE_CHANGED', view: next });
+      });
+      await wait(150);
+      const text = textOf(container);
+      expect(text).toContain('「constructor」として使う');
+      expect(text).not.toContain('継承された名前');
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'label');
+    }
+  });
+});

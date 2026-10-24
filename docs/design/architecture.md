@@ -102,20 +102,27 @@ storage.session への書き込みが成功している限り、利用者に見�
 | `src/core/package/` | ツアーパッケージの展開・検証・画像ヘッダーの解析（サイドパネルで使う） |
 | `src/core/locator/` | 要素特定エンジン（拡張機能 API に依存しない） |
 | `src/core/markdown/` | Markdown を許可リストに沿って DOM に変換する処理 |
-| `src/shared/` | ロガー（出来事のスキーマ）、メッセージの型と検証、識別子、権限、IndexedDB の定義 |
-| `src/background/` | 状態管理、タブ管理、ツアー管理、ログ・保守記録の保管、復帰 |
+| `src/shared/` | ロガー（出来事のスキーマ）、メッセージの型と検証、識別子、権限、IndexedDB の定義、移動の受け付けの待ち |
+| `src/background/` | 状態管理、タブ管理、ツアー管理、ログ・保守記録の保管、復帰、部品の配線（Chrome API へのつなぎ込み）と、部品の間の約束 |
 | `src/content/` | ステップ実行器、完了の目安の監視、ハイライト・吹き出し、ミニガイド |
 | `src/sidepanel/` | サイドパネルの画面、取り込み、画像の URL 管理 |
 | `public/tours/<id>/` | 同梱ツアー（`tour.yaml`、Markdown、画像）と、一覧の `public/tours/index.json` |
 | `tools/` | スキーマ生成、配布用 zip の作成（Node 上で fflate を使う） |
 
-## 実装の最初に行う技術検証
+## 技術検証
 
-単体テストより先に、Chrome の実機で次の点を確かめます。結果によっては本書を直します。
+実装の最初に、Chrome の実機（Playwright で拡張機能を読み込んだ Chromium）で次の6項目を確かめた。すべて成立した。観測値と、Chrome 114 での推定は `docs/tmp/tech-check-result.md` にある。
 
-1. サイドパネルで書いた IndexedDB の Blob を、バックグラウンドとサイドパネルの両方から読めること
-2. サイドパネルで fflate の逐次展開を行い、上限で打ち切れること
-3. `sender.documentId` を Chrome 114 で取得でき、同じタブの遷移で値が変わること
-4. `checkVisibility` の、Chrome 114 での指定の名前（`checkOpacity`・`checkVisibilityCSS`）と、新しい名前（`opacityProperty`・`visibilityProperty`）の両方の扱い
-5. `_execute_action` のショートカットキーでサイドパネルが開くこと
-6. ページのスクリプトから、閉じた Shadow DOM の中のボタンに操作を届けられないこと、および `isTrusted` で見分けられること
+1. サイドパネルで書いた IndexedDB の Blob を、バックグラウンドとサイドパネルの両方から読める
+2. サイドパネルで fflate の逐次展開を行い、上限で打ち切れる
+3. `sender.documentId` を取得でき、同じタブの遷移で値が変わる
+4. `checkVisibility` に、Chrome 114 の指定の名前と新しい名前の両方を渡せる
+5. `_execute_action` のショートカットキーでサイドパネルが開く（自動検査にはできないので、手動で確かめる）
+6. ページのスクリプトから、閉じた Shadow DOM の中のボタンに操作を届けられず、実クリックだけが `isTrusted` で見分けられる
+
+結果を反映した箇所は次のとおり。
+
+- 展開の区切り方（項目2）：圧縮側のデータを小さく区切って渡し、展開結果を受け取るたびに合計を確かめる（設計書の取り込みの処理1）
+- `sender.url` を使わないこと（項目3）：`sender.url` は `pushState` に追従しないので、ページの現在の URL の判定には使わない（本書の送信元の表）
+- `checkVisibility` の新旧の名前（項目4）：両方の名前を渡す（設計書の要素特定エンジンの「表示されているか」）
+- `documentId`（項目3）：ページ側の `HELLO` の `sender.documentId` を記録し、操作の送信元の確認に使う（本書の操作ごとの受け付け条件の表）

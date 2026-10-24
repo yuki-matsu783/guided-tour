@@ -848,3 +848,26 @@ describe('手がかりごとの範囲と role だけの手がかり', () => {
     expect(withTarget({ role: 'button', name: { values: ['保存'], within: 'page' } }).warnings).toEqual([]);
   });
 });
+
+describe('Object.prototype の名前の役割（横展開）', () => {
+  it.each(['__proto__', 'constructor', 'prototype'])(
+    'R-SWEEP-02: tabs の役割名が %s のときは、その名前は使えないという理由のエラーになる',
+    (role) => {
+      const yaml = stringify(tourObj({ tabs: { main: { label: 'メイン' } } })).replace(
+        'tabs:\n',
+        `tabs:\n  ${role}:\n    label: だめ\n`,
+      );
+      const r = parseTour(yaml, FILE);
+      expect(r.ok).toBe(false);
+      const errors = errorsOf(r);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.path).toBe(`tabs.${role}`);
+      expect(errors[0]?.message).toContain('役割の名前');
+      expect(errors[0]?.message).toContain('使えません');
+    },
+  );
+
+  it('R-SWEEP-02: 役割名が普通の名前なら、これまでどおり通る', () => {
+    expect(run(tourObj({ tabs: { admin: { label: '管理' } } })).ok).toBe(true);
+  });
+});

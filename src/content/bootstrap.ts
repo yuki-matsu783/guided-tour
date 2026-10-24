@@ -80,7 +80,8 @@ export function startContent(deps: BootstrapDeps): boolean {
     doc,
     env,
     locate,
-    now: () => Date.now(),
+    // 経過時間の比較に使う時計。壁時計は巻き戻るので、単調に進む performance.now を使う
+    now: () => performance.now(),
     requestFrame: (fn) => win.requestAnimationFrame(fn),
     cancelFrame: (id) => {
       win.cancelAnimationFrame(id);

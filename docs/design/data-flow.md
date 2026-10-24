@@ -46,7 +46,7 @@ keywords: [メッセージ, 保存]
 
 | データ | 保存先 | 項目 |
 |---|---|---|
-| 実行中の状態 | storage.session `tour` | status（running・paused・ended）、pauseReason、sessionId、gen、pageSeq、rev、tourId、hash、stepIndex、stepId、windowId、tabs{役割: {tabId, documentId}}、overlayHidden、hint{gen, met, unsupported}、tabStatus、saveError、recentOpIds[] |
+| 実行中の状態 | storage.session `tour` | status（running・paused・ended）、pauseReason、sessionId、gen、pageSeq、rev、tourId、hash、stepIndex、stepId、windowId、tabs{役割: {tabId, documentId}}、overlayHidden、hint{gen, met, unsupported}、tabStatus、saveError、notice、recentOpIds[] |
 | 進捗 | storage.local `progress` | tourId → {sessionId, gen, stepId, stepIndex, savedAt} |
 | 削除待ち | storage.local `pendingDeletes` | [{tourId, sessionId}] |
 | 設定 | storage.local `settings` | logLevel、miniGuide{enabled, mode, width} |

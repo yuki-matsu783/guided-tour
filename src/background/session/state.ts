@@ -40,6 +40,25 @@ export const TabStatusSnapshotSchema = z.object({
 });
 export type TabStatusSnapshot = z.output<typeof TabStatusSnapshotSchema>;
 
+/**
+ * 役割 → タブの対応表。`z.record` は `__proto__` の項目を落とすので、自分のキーを1つずつ検証して作り直す。
+ * 項目が1つでも形に合わなければ全体を拒否する。
+ */
+const RoleTabsSchema = z
+  .custom<object>((v) => typeof v === 'object' && v !== null && !Array.isArray(v))
+  .transform((obj, ctx) => {
+    const entries: [string, z.output<typeof RoleBindingStateSchema>][] = [];
+    for (const [role, value] of Object.entries(obj)) {
+      const parsed = RoleBindingStateSchema.safeParse(value);
+      if (!parsed.success) {
+        ctx.addIssue({ code: 'custom', message: '役割に対応付けたタブの形が正しくありません', path: [role] });
+        return z.NEVER;
+      }
+      entries.push([role, parsed.data]);
+    }
+    return Object.fromEntries(entries);
+  });
+
 export const TourStateSchema = z.object({
   status: z.enum(['running', 'paused', 'ended']),
   pauseReason: PauseReasonSchema.nullable(),
@@ -52,7 +71,7 @@ export const TourStateSchema = z.object({
   stepIndex: z.int().nonnegative(),
   stepId: z.string().min(1),
   windowId: z.int().nullable(),
-  tabs: z.record(z.string(), RoleBindingStateSchema),
+  tabs: RoleTabsSchema,
   overlayHidden: z.boolean(),
   hint: z.object({ gen: GenSchema, met: z.boolean(), unsupported: z.boolean() }),
   tabStatus: TabStatusSnapshotSchema.nullable(),

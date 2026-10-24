@@ -313,8 +313,21 @@ const TabSchema = z.strictObject({
   url: UrlCondSchema.optional(),
 });
 
-const TabsSchema = z
-  .record(nonEmpty, TabSchema)
+/** 役割の名前にできない名前。オブジェクトの組み込みの名前と衝突し、値が落ちたり読み違えたりするため。 */
+const RESERVED_ROLE_NAMES = ['__proto__', 'constructor', 'prototype'];
+
+/** 入力の段階で役割名を調べる。`z.record` は `__proto__` の項目を落とすので、落ちる前に見る。 */
+const RoleNamesSchema = z.custom<Record<string, unknown>>((v) => typeof v === 'object' && v !== null).superRefine(
+  (tabs, ctx) => {
+    for (const role of Reflect.ownKeys(tabs)) {
+      if (typeof role === 'string' && RESERVED_ROLE_NAMES.includes(role)) {
+        addIssue(ctx, [role], '役割の名前に __proto__・constructor・prototype は使えません');
+      }
+    }
+  },
+);
+
+const TabsSchema = RoleNamesSchema.pipe(z.record(nonEmpty, TabSchema))
   .refine((tabs) => Object.keys(tabs).length <= TOUR_LIMITS.candidates, {
     error: `tabs は${String(TOUR_LIMITS.candidates)}件までです`,
   });

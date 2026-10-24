@@ -66,7 +66,7 @@ describe('B-1: Object.prototype の名前のツアー ID・役割', () => {
     };
   }
 
-  it.each(['toString', 'constructor', 'hasOwnProperty'])(
+  it.each(['toString', 'constructor', '__proto__', 'hasOwnProperty'])(
     'T-TAB-04: 役割の名前が %s でも、対応付けが無ければ missing で、対応付けた後は自分のキーとして残る（追加）',
     async (role) => {
       const env = createEnv(roleTour(role));
