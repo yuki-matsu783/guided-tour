@@ -1,11 +1,12 @@
 /**
  * サイドパネルに渡す状態の写し（`PanelView`）の組み立て。ページから読んだ名前の文字列は含めない。
+ * 固定した版が取れない一時中断では、`tour` を一覧の現在の版から補う。
  * 一覧の進捗は、削除待ちの `{ tourId, sessionId }` に当たるものを出さない（完了・終了した実行回の「続きから」を出さないため）。
  */
 import type { Tour } from '../../core/tour/index.ts';
 import { has } from '../../shared/permissions/index.ts';
 import type { CatalogEntry, PanelView, TabView } from '../../shared/messages/index.ts';
-import type { CatalogPort, TabEvaluation } from '../ports.ts';
+import type { CatalogEntry as CatalogEntryInternal, CatalogPort, TabEvaluation } from '../ports.ts';
 import type { Store } from './store.ts';
 import { DEFAULT_UI, type Settings, type TourState } from './state.ts';
 import type { SessionDeps } from './types.ts';
@@ -26,14 +27,14 @@ async function catalogView(
   deps: SessionDeps,
   store: Store,
   catalog: CatalogPort,
-): Promise<CatalogEntry[]> {
+): Promise<{ views: CatalogEntry[]; entries: CatalogEntryInternal[] }> {
   const [entries, progress, pending] = await Promise.all([
     catalog.list().catch(() => []),
     store.readProgress(),
     store.readPendingDeletes(),
   ]);
   const pendingList = pending ?? [];
-  return Promise.all(
+  const views = await Promise.all(
     entries.map(async (entry) => {
       const tour = entry.tour;
       const saved = progress?.get(tour.id) ?? null;
@@ -60,6 +61,7 @@ async function catalogView(
       };
     }),
   );
+  return { views, entries };
 }
 
 function tabView(evaluation: TabEvaluation): TabView {
@@ -84,9 +86,26 @@ function roleLabels(tour: Tour): PanelView['roles'] {
   return Object.hasOwn(tabs, 'main') ? roles : [{ id: 'main', label: 'main' }, ...roles];
 }
 
+/**
+ * 固定した版が取れない一時中断（再起動後に上書きされたとき）の `tour`。
+ * 名前・`origins` は、ツアー管理の現在の版（新版）から取る。現在の版も無ければ null。
+ */
+function currentTourView(state: TourState, entries: readonly CatalogEntryInternal[]): PanelView['tour'] {
+  if (state.status !== 'paused') return null;
+  const current = entries.find((e) => e.tour.id === state.tourId);
+  if (current === undefined) return null;
+  return {
+    id: current.tour.id,
+    name: current.tour.name,
+    hash: current.hash,
+    origins: [...current.tour.origins],
+    source: current.source,
+  };
+}
+
 export async function buildView(input: ViewInput): Promise<PanelView> {
   const { deps, store, state, pinned, settings, evaluation } = input;
-  const catalog = await catalogView(deps, store, deps.catalog);
+  const { views: catalog, entries } = await catalogView(deps, store, deps.catalog);
   const ui = settings?.miniGuide ?? DEFAULT_UI;
   const logLevel = settings?.logLevel ?? DEFAULT_LEVEL;
   if (state === null) {
@@ -119,7 +138,7 @@ export async function buildView(input: ViewInput): Promise<PanelView> {
     gen: state.gen,
     tour:
       pinned === null
-        ? null
+        ? currentTourView(state, entries)
         : {
             id: pinned.tour.id,
             name: pinned.tour.name,

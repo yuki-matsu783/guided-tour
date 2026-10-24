@@ -95,3 +95,59 @@ describe('起動', () => {
     }
   });
 });
+
+describe('拡張機能の文脈が無効になったとき', () => {
+  function brokenRuntime() {
+    const rt = fakeRuntime();
+    const state = { valid: true, fail: false };
+    const api: RuntimeApi = {
+      ...rt.api,
+      sendMessage: (m) => {
+        if (state.fail) return Promise.reject(new Error('Extension context invalidated.'));
+        return rt.api.sendMessage(m);
+      },
+      contextValid: () => state.valid,
+    };
+    return { api, listeners: rt.listeners, state };
+  }
+  const flush = async (): Promise<void> => {
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  const render = (n: number): unknown => JSON.parse(JSON.stringify(makeRender({ rev: rev(n), selected: false })));
+  /** ページ側に送信を起こさせる（検証を通らないメッセージを受けると、警告のログをバックグラウンドへ送る）。 */
+  const provokeSend = async (listener: Listener | undefined): Promise<void> => {
+    deliver(listener, { type: 'RENDER', rev: 'x' });
+    await flush();
+  };
+
+  it('R-FINAL-06: 送信が失敗して文脈が無効なら、表示をすべて消す', async () => {
+    const rt = brokenRuntime();
+    startContent({ win: window, runtime: rt.api, createLevel: () => () => 'debug' });
+    deliver(rt.listeners[0], render(1));
+    expect(document.querySelectorAll(`[${OWN_HOST_ATTRIBUTE}]`).length).toBeGreaterThan(0);
+    rt.state.valid = false;
+    rt.state.fail = true;
+    await provokeSend(rt.listeners[0]);
+    expect(document.querySelector(`[${OWN_HOST_ATTRIBUTE}]`)).toBeNull();
+  });
+
+  it('R-FINAL-06: 送信が失敗しても文脈が有効なら、表示は残す', async () => {
+    const rt = brokenRuntime();
+    startContent({ win: window, runtime: rt.api, createLevel: () => () => 'debug' });
+    deliver(rt.listeners[0], render(1));
+    rt.state.fail = true;
+    await provokeSend(rt.listeners[0]);
+    expect(document.querySelectorAll(`[${OWN_HOST_ATTRIBUTE}]`).length).toBeGreaterThan(0);
+  });
+
+  it('R-FINAL-06: 文脈が無効になったあとは、描画指示を受けても表示しない', async () => {
+    const rt = brokenRuntime();
+    startContent({ win: window, runtime: rt.api, createLevel: () => () => 'debug' });
+    rt.state.valid = false;
+    rt.state.fail = true;
+    await provokeSend(rt.listeners[0]);
+    deliver(rt.listeners[0], render(2));
+    await flush();
+    expect(document.querySelector(`[${OWN_HOST_ATTRIBUTE}]`)).toBeNull();
+  });
+});

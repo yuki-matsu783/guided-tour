@@ -71,16 +71,23 @@ export interface Session {
   handlePanel(msg: PanelToBg): Promise<PanelResponse>;
   handlePage(msg: PageToBg, sender: PageSender): Promise<PageResponse>;
   onTabEvent(event: TabEvent): Promise<void>;
-  onCatalogChanged(tourId: string, hash: string): Promise<void>;
-  /** 取り込み版の削除。同じ ID の同梱版が残っていても、上書きにはせず終了する。 */
+  /** 取り込みの通知。上書きかどうかは、通知の `hash` ではなくツアー管理の現在の版と固定した版を比べて決める。 */
+  onCatalogChanged(tourId: string, hash?: string): Promise<void>;
+  /**
+   * 取り込み版の削除。同じ ID の同梱版が残っていても、上書きにはせず終了する。
+   * 実行中でなくても、そのツアーの進捗を消す（消せなければ削除待ちに入れる）。
+   */
   onCatalogRemoved(tourId: string): Promise<void>;
   /** `permissions.onRemoved` で、実行中のツアーの権限が失われたとき。 */
   onPermissionLost(): Promise<void>;
-  /** Service Worker 起動時の復帰（手順1〜4）。起動したらまず呼ぶ。 */
+  /** Service Worker 起動時の復帰（手順1〜5）。起動したらまず呼ぶ。 */
   recover(): Promise<void>;
   view(): Promise<PanelView>;
-  /** 実行中のツアーの `origins`（`watchRemoved` に渡す）。実行中でなければ null。 */
-  runningTour(): Pick<Tour, 'origins'> | null;
+  /**
+   * 実行中のツアーの `origins`（`watchRemoved` に渡す）。実行中でなければ null。
+   * 起こされた直後でも、状態を storage から読み込んでから答える。
+   */
+  runningTour(): Promise<Pick<Tour, 'origins'> | null>;
 }
 
 const DONE: SessionResponse = { status: 'done' };
@@ -257,7 +264,7 @@ export function createSession(deps: SessionDeps): Session {
 
   // ---- 確定と外への作用 ----
 
-  async function removeProgressOrPend(st: TourState): Promise<void> {
+  async function removeProgressOrPend(st: Pick<TourState, 'tourId' | 'sessionId'>): Promise<void> {
     if (await store.removeProgress(st.tourId, st.sessionId)) return;
     const list = await store.readPendingDeletes();
     if (list === null) {
@@ -811,7 +818,7 @@ export function createSession(deps: SessionDeps): Session {
     return DONE;
   }
 
-  async function catalogChanged(tourId: string, hash: string): Promise<void> {
+  async function catalogChanged(tourId: string): Promise<void> {
     await ensureLoaded();
     const st = state;
     if (st === null || st.status === 'ended' || st.tourId !== tourId) return;
@@ -825,7 +832,7 @@ export function createSession(deps: SessionDeps): Session {
       await endRun(st, 'removed');
       return;
     }
-    if (hash === st.hash) return;
+    if (current.hash === st.hash) return;
     if (st.status === 'paused') {
       if (st.pauseReason === 'overwritten') return;
       // 利用者・許可の取り消しで一時中断中でも、上書きされたら理由を改める（一時中断のまま）
@@ -843,8 +850,18 @@ export function createSession(deps: SessionDeps): Session {
   async function catalogRemoved(tourId: string): Promise<void> {
     await ensureLoaded();
     const st = state;
-    if (st === null || st.status === 'ended' || st.tourId !== tourId) return;
-    await endRun(st, 'removed');
+    if (st !== null && st.status !== 'ended' && st.tourId === tourId) {
+      await endRun(st, 'removed');
+      return;
+    }
+    // 実行中でなくても、削除したツアーの進捗は残さない（保存期間は削除まで）
+    const map = await store.readProgress();
+    if (map === null) {
+      log.warn('error', { name: 'Unknown', reason: 'storage' });
+      return;
+    }
+    const saved = map.get(tourId);
+    if (saved !== undefined) await removeProgressOrPend({ tourId, sessionId: saved.sessionId });
   }
 
   // ---- ページ側からの受け付け ----
@@ -980,7 +997,7 @@ export function createSession(deps: SessionDeps): Session {
       case 'SET_UI':
         return setUi(msg);
       case 'CATALOG_CHANGED':
-        await catalogChanged(msg.tourId, msg.hash);
+        await catalogChanged(msg.tourId);
         return DONE;
       case 'GET_STATE':
       case 'REMOVE':
@@ -1045,14 +1062,41 @@ export function createSession(deps: SessionDeps): Session {
     // 手順3: 進捗の突き合わせ
     if (st.status === 'ended') await removeProgressOrPend(st);
     else await reconcileProgress(st);
-    // 手順4: `rev` を進め、`SYNC` と現在のステップの描画を送る（実行中でなければ表示を消す）
-    await pinnedOf(st);
+    // 手順4: 固定した版を現在の版と照合する（通知が届かないまま再起動したときの取りこぼしを拾う）
+    const checked = await reconcileVersion(st);
+    if (checked === 'ended') return;
+    // 手順5: `rev` を進め、`SYNC` と現在のステップの描画を送る（実行中でなければ表示を消す）
     await finish({
-      next: { ...st, saveError: false },
+      next: { ...checked, saveError: false },
       display: 'plan',
-      sync: st.status === 'running',
+      sync: checked.status === 'running',
       progress: 'none',
     });
+  }
+
+  /**
+   * 実行中・一時中断中のツアーの固定した版を、ツアー管理の現在の版と照合する。
+   * 現在の版が無ければ削除として終了し（'ended'）、版が違う・固定した版が取れないときは上書きによる一時中断にした状態を返す。
+   * ツアー管理を読めなかったときは、判断せずそのまま返す。
+   */
+  async function reconcileVersion(st: TourState): Promise<TourState | 'ended'> {
+    if (st.status === 'ended') return st;
+    let current: CatalogTour | null;
+    try {
+      current = await deps.catalog.get(st.tourId);
+    } catch {
+      await pinnedOf(st);
+      return st;
+    }
+    if (current === null) {
+      await endRun(st, 'removed');
+      return 'ended';
+    }
+    const pinned = current.hash === st.hash ? await pinnedOf(st) : null;
+    if (pinned !== null) return st;
+    if (st.status === 'paused' && st.pauseReason === 'overwritten') return st;
+    log.info('session.pause', { reason: 'overwritten' });
+    return { ...st, status: 'paused', pauseReason: 'overwritten' };
   }
 
   // ---- 公開 ----
@@ -1173,7 +1217,7 @@ export function createSession(deps: SessionDeps): Session {
     handlePanel,
     handlePage,
     onTabEvent: (e) => enqueue(() => tabEvent(e)),
-    onCatalogChanged: (tourId, hash) => enqueue(() => catalogChanged(tourId, hash)),
+    onCatalogChanged: (tourId) => enqueue(() => catalogChanged(tourId)),
     onCatalogRemoved: (tourId) => enqueue(() => catalogRemoved(tourId)),
     onPermissionLost: () =>
       enqueue(async () => {
@@ -1182,10 +1226,12 @@ export function createSession(deps: SessionDeps): Session {
       }).then(() => undefined),
     recover: () => enqueue(recoverInner),
     view: currentView,
-    runningTour: () => {
-      const st = state;
-      if (st?.status !== 'running') return null;
-      return pinnedCache.get(cacheKey(st.tourId, st.hash))?.tour ?? null;
-    },
+    runningTour: () =>
+      enqueue(async () => {
+        await ensureLoaded();
+        const st = state;
+        if (st?.status !== 'running') return null;
+        return (await pinnedOf(st))?.tour ?? null;
+      }),
   };
 }

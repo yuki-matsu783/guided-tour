@@ -172,3 +172,34 @@ describe('watchRemoved', () => {
 export function chromeFits(): PermissionsApi {
   return chrome.permissions;
 }
+
+describe('watchRemoved（Promise を返す取得）', () => {
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+
+  it('R-FINAL-01: 実行中のツアーを非同期に取得できるとき、取得を待ってから判定し onLost を呼ぶ', async () => {
+    const f = fakeApi({ granted: [] });
+    const onLost = vi.fn();
+    watchRemoved(f.api, () => Promise.resolve(tourOf('https://a.example')), onLost);
+    f.fire({ origins: ['https://a.example/*'] });
+    await settle();
+    expect(onLost).toHaveBeenCalledTimes(1);
+  });
+  it('R-FINAL-01: 非同期の取得が null なら呼ばない', async () => {
+    const f = fakeApi({ granted: [] });
+    const onLost = vi.fn();
+    watchRemoved(f.api, () => Promise.resolve(null), onLost);
+    f.fire({ origins: ['https://a.example/*'] });
+    await settle();
+    expect(onLost).not.toHaveBeenCalled();
+  });
+  it('R-FINAL-01: 非同期の取得が失敗しても、例外を外へ出さず呼ばない', async () => {
+    const f = fakeApi({ granted: [] });
+    const onLost = vi.fn();
+    watchRemoved(f.api, () => Promise.reject(new Error('x')), onLost);
+    f.fire({ origins: ['https://a.example/*'] });
+    await settle();
+    expect(onLost).not.toHaveBeenCalled();
+  });
+});

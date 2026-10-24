@@ -33,7 +33,7 @@ function withSteps(ids: string[]): Tour {
 
 describe('ツアーの改訂', () => {
   async function overwritten(env: Env, dropOld = false): Promise<void> {
-    env.catalog.dropOldVersions = dropOld;
+    env.catalog.keepOldVersions = !dropOld;
     env.catalog.set(makeTour(), 'h2');
     await env.session.onCatalogChanged('t1', 'h2');
   }

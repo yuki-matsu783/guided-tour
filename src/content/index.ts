@@ -15,6 +15,11 @@ startContent({
       },
     },
     sendMessage: (message) => chrome.runtime.sendMessage(message),
+    // 拡張機能の再読み込み・更新のあと、古いページ側では `chrome.runtime.id` が無くなる
+    contextValid: () => {
+      const id: unknown = chrome.runtime.id;
+      return id !== undefined;
+    },
   },
   createLevel: () => {
     const source = createLevelSource({

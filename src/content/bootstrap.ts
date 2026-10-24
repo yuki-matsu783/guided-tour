@@ -4,6 +4,8 @@
  * 2回目以降の組み込みは実行器を作らず、HELLO だけ送り直す。バックグラウンドが文書 ID を記録し直して、
  * すでに動いている実行器へ描画指示を送れるようにするため（ツアーの終了後に同じタブで開始し直すと、組み込みだけが再び走る）。
  * 印は二重の起動を避けるための判定にだけ使い、他の用途には使わない。
+ * 拡張機能の再読み込み・更新で文脈が無効になったら（送信の失敗のあとに `contextValid` が偽になる）、
+ * 自分の表示（ミニガイド・ハイライト・吹き出し・表示を戻すボタン）をすべて消し、監視を止める。
  */
 import { defaultEnv, locate } from '../core/locator/index.ts';
 import {
@@ -27,6 +29,8 @@ export interface RuntimeApi {
     ): void;
   };
   sendMessage(message: unknown): unknown;
+  /** 拡張機能の文脈がまだ有効か（`chrome.runtime.id` が残っているか）。無ければ常に有効とみなす。 */
+  contextValid?: () => boolean;
 }
 
 export interface BootstrapDeps {
@@ -39,18 +43,33 @@ export interface BootstrapDeps {
 /** 起動したら true。すでに動いているときは HELLO だけ送り直して false。 */
 export function startContent(deps: BootstrapDeps): boolean {
   const { win, runtime } = deps;
+  let disposed = false;
+  let stepRuntime: Runtime | null = null;
+  /** 送信の失敗のあと、文脈が無効になっていれば、表示を消して監視を止める。 */
+  const checkContext = (): void => {
+    if (disposed || runtime.contextValid?.() !== false) return;
+    disposed = true;
+    stepRuntime?.dispose();
+  };
   const sendRaw = (message: unknown): void => {
+    if (disposed) return;
     try {
-      void Promise.resolve(runtime.sendMessage(message)).catch(() => undefined);
+      void Promise.resolve(runtime.sendMessage(message)).catch(checkContext);
     } catch {
       // 受け手がいなくてもページ側は止めない
+      checkContext();
     }
   };
   /** 応答を返す送信。失敗は握りつぶし、応答が無いものとして null を返す。 */
   const sendForResponse = (message: PageToBg): Promise<unknown> => {
+    if (disposed) return Promise.resolve(null);
     try {
-      return Promise.resolve(runtime.sendMessage(message)).catch(() => null);
+      return Promise.resolve(runtime.sendMessage(message)).catch(() => {
+        checkContext();
+        return null;
+      });
     } catch {
+      checkContext();
       return Promise.resolve(null);
     }
   };
@@ -76,7 +95,7 @@ export function startContent(deps: BootstrapDeps): boolean {
     viewport: () => env.viewport(),
   });
   const miniGuide = createMiniGuide({ doc, send: sendForResponse, viewport: () => env.viewport() });
-  const stepRuntime = createRuntime({
+  const created = createRuntime({
     doc,
     env,
     locate,
@@ -93,7 +112,8 @@ export function startContent(deps: BootstrapDeps): boolean {
     logger,
   });
 
-  current = stepRuntime;
+  stepRuntime = created;
+  current = created;
   runtime.onMessage.addListener((raw, _sender, sendResponse) => {
     const message = parseBgToPage(raw, logger);
     if (message === null) return undefined;
@@ -101,7 +121,8 @@ export function startContent(deps: BootstrapDeps): boolean {
       sendResponse({ ok: true });
       return undefined;
     }
-    stepRuntime.handle(message);
+    if (disposed) return undefined;
+    created.handle(message);
     return undefined;
   });
 

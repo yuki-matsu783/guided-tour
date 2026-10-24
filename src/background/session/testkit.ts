@@ -270,12 +270,12 @@ export class FakeCatalog {
   readonly current = new Map<string, CatalogTour>();
   /** 固定できる版（`hash` ごと）。 */
   readonly versions = new Map<string, CatalogTour>();
-  /** 旧版が取れなくなったことにするか。 */
-  dropOldVersions = false;
+  /** 旧版を保持するか。本物は旧版を保存しないので、既定は保持しない（保持する検証は明示する）。 */
+  keepOldVersions = false;
 
   set(tour: Tour, hash: string): void {
     const entry: CatalogTour = { tour, hash, source: 'imported' };
-    if (this.dropOldVersions) this.versions.clear();
+    if (!this.keepOldVersions) this.versions.clear();
     this.current.set(tour.id, entry);
     this.versions.set(`${tour.id}:${hash}`, entry);
   }
