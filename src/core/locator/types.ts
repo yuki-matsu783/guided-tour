@@ -1,34 +1,19 @@
 /**
  * 要素特定エンジンの入出力の型。
- * 入力は target（ツアー形式の zod スキーマが作る `Target` と同じ形）と、判定を差し替える `LocatorEnv`。
+ * 入力は target（ツアー形式の zod スキーマが作る `Target`）と、判定を差し替える `LocatorEnv`。
  * 出力の `LocateSummary` は文字列（名前・表示文字列・URL）を含まず、ページ側からバックグラウンドへの報告と保守記録にそのまま使える。
  */
+
+import type { Target } from '../tour/schema';
 
 /** 探索の手がかりの段階（1 が最上位）。 */
 export type Tier = 1 | 2 | 3 | 4 | 5;
 
-/** `within`（探す範囲）の指定。役割＋名前、ラベル、CSS のいずれか。 */
-export type LocatorWithin =
-  | { role: string; name: string[] }
-  | { label: string[] }
-  | { css: string };
+/** ツアーの target。ツアー形式の zod スキーマが作る型をそのまま使う。 */
+export type LocatorTarget = Target;
 
-/** ツアーの target。`src/core/tour` の `Target` と同じ形。 */
-export interface LocatorTarget {
-  tourId?: string;
-  testId?: string;
-  role?: string;
-  name?: string[];
-  label?: string[];
-  text?: string[];
-  textTag?: string[];
-  match?: 'exact' | 'contains';
-  css?: string[];
-  within?: LocatorWithin;
-  require?: { role?: string; inputType?: string; region?: string; name?: string[] };
-  highlight?: { closest: string };
-  fallbackText?: string;
-}
+/** `within`（探す範囲）の指定。役割＋名前、ラベル、CSS のいずれか。 */
+export type LocatorWithin = NonNullable<Target['within']>;
 
 export type LocateReason = 'degraded' | 'conflict' | 'missing' | 'nameMismatch';
 
