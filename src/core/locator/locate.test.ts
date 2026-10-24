@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { computeAccessibleName } from 'dom-accessibility-api';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultEnv } from './env';
 import { locate } from './locate';
 import type { LocateOptions, LocateResult, LocatorEnv, LocatorTarget } from './types';
@@ -823,14 +823,17 @@ describe('第1段のレビュー指摘の修正', () => {
     expect(none.found).toBe(false);
   });
 
-  it('R-LOC-7: 段階4で1000件の候補があっても 100ms 未満で終わる', () => {
+  it('R-LOC-7: 段階4で入れ子の候補が1000件あっても、最も内側を残す手間は候補数に比例する', () => {
     let html = '';
     for (let i = 0; i < 500; i += 1) html += '<div class="o"><div class="i">保存</div></div>';
     document.body.innerHTML = `<div>${html}</div>`;
     const env = makeEnv({ visibleText: (el) => el.textContent });
-    const start = performance.now();
+    // 時間ではなく、祖先を辿る処理が集合を引く回数で確かめる（2乗なら 1000×1000 のおよそ 100 万回になる）
+    const has = vi.spyOn(Set.prototype, 'has');
     const r = locate({ text: ['保存'], textTag: ['div'], match: 'contains' }, document, env);
-    expect(performance.now() - start).toBeLessThan(100);
+    const calls = has.mock.calls.length;
+    has.mockRestore();
+    expect(calls).toBeLessThan(1000 * 20);
     expect(r.counts[0]?.collected).toBe(500);
   });
 
