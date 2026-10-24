@@ -35,6 +35,29 @@ const RULES = {
   'src/shared': ['background', 'content', 'sidepanel'],
 };
 
+/** 文字列から HTML・コードを作る危険な API。`src/**`（テストを除く）で禁止する。 */
+const DANGEROUS_PROPERTIES = [
+  'innerHTML',
+  'outerHTML',
+  'insertAdjacentHTML',
+  'setHTMLUnsafe',
+  'createContextualFragment',
+].map((property) => ({ property, message: `${property} は使えない（文字列から HTML を作らない）` }));
+
+const DANGEROUS_GLOBALS = ['DOMParser', 'eval'].map((name) => ({
+  name,
+  message: `${name} は使えない（文字列から HTML・コードを作らない）`,
+}));
+
+/** `Function` の生成・呼び出し（`new Function(...)`・`Function(...)`、`window.Function` など）。 */
+const DANGEROUS_SYNTAX = [
+  'NewExpression[callee.name=/^(Function|DOMParser)$/]',
+  'CallExpression[callee.name=/^(Function|eval)$/]',
+  'NewExpression[callee.property.name=/^(Function|DOMParser)$/]',
+  'CallExpression[callee.property.name=/^(Function|eval)$/]',
+  'MemberExpression[object.name=\'document\'][property.name=/^(write|writeln)$/]',
+].map((selector) => ({ selector, message: '文字列から HTML・コードを作る API は使えない' }));
+
 export default tseslint.config(
   { ignores: ['dist/**', 'release/**', 'node_modules/**', 'test-results/**'] },
   js.configs.recommended,
@@ -73,7 +96,28 @@ export default tseslint.config(
     ),
   })),
   {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-properties': ['error', ...DANGEROUS_PROPERTIES],
+      'no-restricted-globals': ['error', ...DANGEROUS_GLOBALS],
+      'no-restricted-syntax': ['error', ...DANGEROUS_SYNTAX],
+    },
+  },
+  {
+    // 後に書いた設定が同じ規則を上書きするので、src/** の禁止もここに含める
     files: ['src/core/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        ...DANGEROUS_GLOBALS,
+        { name: 'chrome', message: 'src/core は拡張機能 API に依存しない' },
+      ],
+    },
+  },
+  {
+    files: ['src/core/**/*.test.{ts,tsx}'],
     rules: {
       'no-restricted-globals': [
         'error',

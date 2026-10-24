@@ -412,7 +412,7 @@ describe('警告（必須の照合がない）', () => {
     expect(warnOf({ role: 'button', name: ['保存'] })).toEqual([]);
     expect(warnOf({ label: ['名前'] })).toEqual([]);
     expect(warnOf({ text: ['保存'] })).toEqual([]);
-    expect(warnOf({ css: ['#a'], role: 'button' })).toEqual([]);
+    expect(warnOf({ css: ['#a'], role: 'button', name: ['保存'] })).toEqual([]);
   });
 
   it('T-TOUR-43: 段階1か5だけでも名前の候補（name・label・text）があれば警告は付かない', () => {
@@ -705,5 +705,146 @@ describe('解析済みツアーの再検証', () => {
     const noKind = { ...r.tour, steps: [{ id: 'a', title: 'A', url: { origin: ORIGIN } }] };
     expect(CompiledTourSchema.safeParse(noKind).success).toBe(false);
     expect(CompiledTourSchema.safeParse({ ...r.tour, extra: 1 }).success).toBe(false);
+  });
+});
+
+/** YAML の文字列から読む。ツアーの本体は最小で、`extra` を最上位に足す。 */
+const HEADER = ['schemaVersion: 3', 'id: t', 'name: n', 'origins: [https://example.com]'];
+const STEPS = ['steps:', '  - id: a', '    title: A', '    url: {origin: "https://example.com"}'];
+const yamlRun = (...lines: string[]) => parseTour(lines.join('\n'), FILE);
+const messagesOf = (r: ReturnType<typeof parseTour>): string[] => errorsOf(r).map((e) => e.message);
+
+describe('第1段のレビュー指摘の修正（ツアー形式）', () => {
+  it('R-TOUR-1: キーは文字列として比べ、1 と "1" は重複になる', () => {
+    const r = yamlRun(...HEADER, 'tabs:', '  "1": {}', '  1: {}', ...STEPS);
+    expect(r.ok).toBe(false);
+    expect(messagesOf(r).some((m) => m.includes('重複'))).toBe(true);
+  });
+
+  it('R-TOUR-1: 文字列でないキー（数値・真偽値・null・対応表）はエラーになる', () => {
+    for (const key of ['1: {}', 'true: {}', '~: {}', '? {a: 1}\n  : {}']) {
+      const r = yamlRun(...HEADER, 'tabs:', `  ${key}`, ...STEPS);
+      expect(r.ok, key).toBe(false);
+      expect(messagesOf(r).some((m) => m.includes('文字列')), key).toBe(true);
+    }
+  });
+
+  it('R-TOUR-2: エイリアスの展開後に深さが32を超えるとき、深さのエラーになる', () => {
+    const deep = `${'{a: '.repeat(24)}1${'}'.repeat(24)}`;
+    const r = yamlRun(...HEADER, `x: &d ${deep}`, `y: ${'['.repeat(10)}*d${']'.repeat(10)}`, ...STEPS);
+    expect(r.ok).toBe(false);
+    expect(messagesOf(r)).toEqual([expect.stringContaining('入れ子が深すぎ')]);
+  });
+
+  it('R-TOUR-2: 展開後も32以内なら深さのエラーにならない', () => {
+    const deep = `${'{a: '.repeat(10)}1${'}'.repeat(10)}`;
+    const r = yamlRun(...HEADER, `x: &d ${deep}`, `y: [*d]`, ...STEPS);
+    expect(messagesOf(r).some((m) => m.includes('入れ子が深すぎ'))).toBe(false);
+  });
+
+  it('R-TOUR-3: 未知の項目のエラーでは、キーの制御文字を除き40文字で切って示す', () => {
+    const key = 'ab\u0007c'.repeat(30);
+    const shown = 'abc'.repeat(14).slice(0, 40);
+    const r = withTarget({ testId: 'x', [key]: 1 });
+    const [e] = errorsOf(r);
+    expect(errorsOf(r)).toHaveLength(1);
+    expect(e?.path).toBe(`steps[0].target.${shown}`);
+    expect(e?.message).toContain(shown);
+    expect(e?.message).not.toContain(key);
+    expect(/\p{Cc}/u.test(`${e?.path ?? ''}${e?.message ?? ''}`)).toBe(false);
+    expect(e?.line).not.toBeNull();
+  });
+
+  it('R-TOUR-4: tabs.<役割>.url の origin が origins の外ならエラーになる', () => {
+    const r = run(tourObj({ tabs: { admin: { url: { origin: 'https://other.example.com' } } } }));
+    expect(pathsOf(r)).toEqual(['tabs.admin.url.origin']);
+  });
+
+  it('R-TOUR-4: tabs は20件ちょうどなら通り、21件ならエラーになる', () => {
+    const tabs = (n: number): Obj => Object.fromEntries(Array.from({ length: n }, (_, i) => [`r${String(i)}`, {}]));
+    expect(run(tourObj({ tabs: tabs(20) })).ok).toBe(true);
+    expect(pathsOf(run(tourObj({ tabs: tabs(21) })))).toEqual(['tabs']);
+  });
+
+  it('R-TOUR-4: textTag・within.name・require.name の候補は20件ちょうどなら通り、21件ならエラーになる', () => {
+    const list = (n: number): string[] => Array.from({ length: n }, (_, i) => `c${String(i)}`);
+    const cases: [string, (n: number) => Obj][] = [
+      ['textTag', (n) => ({ text: ['x'], textTag: list(n) })],
+      ['within.name', (n) => ({ text: ['x'], within: { role: 'main', name: list(n) } })],
+      ['require.name', (n) => ({ testId: 't', require: { name: list(n) } })],
+    ];
+    for (const [key, make] of cases) {
+      expect(withTarget(make(20)).ok, key).toBe(true);
+      // within の形の誤りは within の場所で報告される
+      const place = key === 'within.name' ? 'within' : key;
+      expect(pathsOf(withTarget(make(21))), key).toEqual([`steps[0].target.${place}`]);
+    }
+  });
+
+  it('R-TOUR-4: パスが / で始まらないとき、exact・prefix・glob のどれでもエラーになる', () => {
+    for (const key of ['exact', 'prefix', 'glob']) {
+      const r = withStep(pageStep({ url: { origin: ORIGIN, path: { [key]: 'a/b' } } }));
+      expect(pathsOf(r), key).toEqual([`steps[0].url.path.${key}`]);
+    }
+  });
+
+  it('R-TOUR-4: exact・prefix に * を書くとエラーになり、glob では書ける', () => {
+    for (const key of ['exact', 'prefix']) {
+      const r = withStep(pageStep({ url: { origin: ORIGIN, path: { [key]: '/a/*' } } }));
+      expect(pathsOf(r), key).toEqual([`steps[0].url.path.${key}`]);
+    }
+    expect(withStep(pageStep({ url: { origin: ORIGIN, path: { glob: '/a/*' } } })).ok).toBe(true);
+  });
+
+  it('R-TOUR-4: 解析できない open はエラーになる（steps・tabs のどちらでも）', () => {
+    expect(pathsOf(withStep(pageStep({ open: 'これは URL ではない' })))).toEqual(['steps[0].open']);
+    expect(pathsOf(run(tourObj({ tabs: { main: { open: '::' } } })))).toEqual(['tabs.main.open']);
+  });
+
+  it('R-TOUR-4: done.target にも警告が付き、場所は steps[].done.target になる', () => {
+    const r = withStep(pageStep({ done: { type: 'element', target: { testId: 'x' } } }));
+    expect(r.ok).toBe(true);
+    expect(r.warnings.map((w) => w.path)).toEqual(['steps[0].done.target']);
+  });
+});
+
+describe('手がかりごとの範囲と role だけの手がかり', () => {
+  const ok = (target: Obj): boolean => withTarget(target).ok;
+
+  it('T-TOUR-64: name・label・text・css を { values, within } の形で書ける（within は範囲か page）', () => {
+    expect(ok({ role: 'button', name: { values: ['保存'], within: 'page' } })).toBe(true);
+    expect(ok({ label: { values: ['名前'], within: { css: 'form' } } })).toBe(true);
+    expect(ok({ text: { values: ['保存'], within: { role: 'main', name: ['本文'] } } })).toBe(true);
+    expect(ok({ css: { values: ['#a'], within: { label: ['検索'] } }, require: { role: 'button' } })).toBe(true);
+    expect(ok({ text: { values: ['保存'] } })).toBe(true);
+  });
+
+  it('T-TOUR-64: within に範囲か page 以外を書くと、その場所のエラーになる', () => {
+    for (const within of ['other', 5, {}, { css: '' }, { role: 'main' }]) {
+      const r = withTarget({ label: { values: ['x'], within } });
+      const paths = pathsOf(r);
+      expect(paths, JSON.stringify(within)).toHaveLength(1);
+      expect(paths[0], JSON.stringify(within)).toMatch(/^steps\[0\]\.target\.label\.within/u);
+    }
+  });
+
+  it('T-TOUR-64: values が空・欠落、未知の項目があるときはエラーになる', () => {
+    expect(pathsOf(withTarget({ label: { values: [] } }))).toEqual(['steps[0].target.label.values']);
+    expect(withTarget({ label: { within: 'page' } }).ok).toBe(false);
+    expect(pathsOf(withTarget({ label: { values: ['x'], extra: 1 } }))).toEqual(['steps[0].target.label.extra']);
+    expect(withTarget({ label: 'x' }).ok).toBe(false);
+  });
+
+  it('T-TOUR-65: role があり name がない target は取り込めて、FR-10 の警告が出る', () => {
+    const r = withTarget({ role: 'button' });
+    expect(r.ok).toBe(true);
+    expect(r.warnings.map((w) => w.path)).toEqual(['steps[0].target']);
+    const done = withStep(pageStep({ done: { type: 'element', target: { role: 'button' } } }));
+    expect(done.warnings.map((w) => w.path)).toEqual(['steps[0].done.target']);
+  });
+
+  it('T-TOUR-65: role と name があれば警告は付かず、name が { values } の形でも付かない', () => {
+    expect(withTarget({ role: 'button', name: ['保存'] }).warnings).toEqual([]);
+    expect(withTarget({ role: 'button', name: { values: ['保存'], within: 'page' } }).warnings).toEqual([]);
   });
 });

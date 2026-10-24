@@ -44,6 +44,8 @@ export interface LocatorEnv {
   computeRole(el: Element): string | null;
   /** エンジンの中だけで使い、呼び出し元には返さない。 */
   computeName(el: Element): string;
+  /** 利用者に見えている文字列（段階4の照合用）。非表示の子孫の文字列は含めない。エンジンの中だけで使い、呼び出し元には返さない。 */
+  visibleText(el: Element): string;
   viewport(): { width: number; height: number };
   /** 自前の表示のホスト要素か（属性 `data-guided-tour-host` を持つ）。 */
   isOwnHost(el: Element): boolean;

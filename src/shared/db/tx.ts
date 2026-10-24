@@ -18,6 +18,7 @@ export function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
 /**
  * カーソルを順に訪ねる。visit が true を返す間だけ次へ進み、false で止める。
  * visit の中で `cursor.delete()` などをしてよい（同じトランザクションの中）。
+ * visit が例外を投げたら、そこで止めて reject する。
  */
 export function forEachCursor(
   request: IDBRequest<IDBCursorWithValue | null>,
@@ -26,11 +27,16 @@ export function forEachCursor(
   return new Promise((resolve, reject) => {
     request.onsuccess = () => {
       const cursor = request.result;
-      if (!cursor || !visit(cursor)) {
-        resolve();
-        return;
+      try {
+        if (!cursor || !visit(cursor)) {
+          resolve();
+          return;
+        }
+        cursor.continue();
+      } catch (error) {
+        // visit の例外は呼び出し元へ伝える（イベントの中で投げると誰にも受け止められない）
+        reject(error instanceof Error ? error : new Error('indexeddb cursor visit failed'));
       }
-      cursor.continue();
     };
     request.onerror = () => {
       reject(request.error ?? new Error('indexeddb cursor failed'));

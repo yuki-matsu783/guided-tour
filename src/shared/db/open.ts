@@ -28,11 +28,17 @@ function createStores(db: IDBDatabase): void {
 export function openDb(factory: IDBFactory = indexedDB): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = factory.open(DB_NAME, DB_VERSION);
+    // blocked で reject した後に open が成功したら、その接続は誰も使わないので閉じる
+    let rejected = false;
     request.onupgradeneeded = () => {
       createStores(request.result);
     };
     request.onsuccess = () => {
       const db = request.result;
+      if (rejected) {
+        db.close();
+        return;
+      }
       db.onversionchange = () => {
         db.close();
       };
@@ -42,6 +48,7 @@ export function openDb(factory: IDBFactory = indexedDB): Promise<IDBDatabase> {
       reject(request.error ?? new Error('indexeddb open failed'));
     };
     request.onblocked = () => {
+      rejected = true;
       reject(new Error('indexeddb open blocked'));
     };
   });

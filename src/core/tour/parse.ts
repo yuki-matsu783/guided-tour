@@ -5,8 +5,8 @@
  *
  * 処理フロー:
  * 1. yaml で解析する（YAML 1.2、マージキー無効、重複キー・独自タグ・警告はエラー）。構文のエラーがあればここで返す
- * 2. 構文木を調べる（最上位が対応表か、マージキー、入れ子の深さ）
- * 3. JS の値にする（エイリアス展開は100まで）
+ * 2. 構文木を調べる（最上位が対応表か、マージキー、キーが文字列か・文字列として重複していないか、入れ子の深さ）
+ * 3. JS の値にする（エイリアス展開は100まで）。展開後の値の入れ子の深さも調べる
  * 4. zod で形式を検証し、エラーの場所を YAML の行に対応付ける
  * 5. `validateTourRules` でツアー全体の規則と警告を調べる
  */
@@ -44,6 +44,15 @@ export function formatPath(path: readonly PathSegment[]): string {
 // ---- YAML の位置 ----
 
 type Doc = Document.Parsed;
+
+/** 利用者の書いたキーを、メッセージ・場所に出すときの形にする。制御文字を除き、40文字で切る。 */
+export function safeKey(key: string): string {
+  return Array.from(key.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ''))
+    .slice(0, KEY_DISPLAY_CHARS)
+    .join('');
+}
+
+const KEY_DISPLAY_CHARS = 40;
 
 /** 場所から行番号を求める。ノードがない（項目の欠落など）ときは、あるところまで親をさかのぼる。 */
 function lineOfPath(doc: Doc, lc: LineCounter, path: readonly PathSegment[]): number | null {
@@ -111,6 +120,8 @@ function inspectTree(root: unknown): TreeReport {
       for (const item of node.items) walk(item, depth + 1);
       return;
     }
+    // キーは文字列として比べる（1 と "1" は重複）。文字列でないキーはエラー
+    const seen = new Set<string>();
     for (const pair of node.items) {
       if (isScalar(pair.key) && pair.key.value === '<<' && pair.key.range) {
         report.findings.push({
@@ -118,11 +129,39 @@ function inspectTree(root: unknown): TreeReport {
           message: 'マージキー（<<）は使えません。値を直接書いてください',
         });
       }
+      const key = pair.key;
+      if (isScalar(key) || isMap(key) || isSeq(key)) {
+        const offset = key.range?.[0] ?? node.range?.[0] ?? 0;
+        if (!isScalar(key) || typeof key.value !== 'string') {
+          report.findings.push({
+            offset,
+            message: 'キーは文字列で書いてください（数値・真偽値・null・対応表・リストはキーにできません）。数字のキーは引用符で囲みます',
+          });
+        }
+        if (isScalar(key)) {
+          const text = String(key.value);
+          if (seen.has(text)) {
+            report.findings.push({
+              offset,
+              message: '同じキーが重複しています。同じ階層に同じキーは書けません（数値と文字列の違いは区別しません）',
+            });
+          }
+          seen.add(text);
+        }
+      }
       walk(pair.value, depth + 1);
     }
   };
   walk(root, 1);
   return report;
+}
+
+/** 展開後の値の入れ子が上限を超えるか。上限を超えた時点で止める（循環していても終わる）。 */
+function exceedsDepth(value: unknown, depth: number): boolean {
+  if (value === null || typeof value !== 'object') return false;
+  if (depth > TOUR_LIMITS.yamlDepth) return true;
+  const children: unknown[] = Array.isArray(value) ? value : Object.values(value);
+  return children.some((child) => exceedsDepth(child, depth + 1));
 }
 
 // ---- zod のエラーの日本語化 ----
@@ -138,7 +177,7 @@ function getByPath(data: unknown, path: readonly PathSegment[]): unknown {
 
 function fieldName(path: readonly PathSegment[]): string {
   const last = path.at(-1);
-  if (typeof last === 'string') return last;
+  if (typeof last === 'string') return safeKey(last);
   if (typeof last === 'number') return `${String(last + 1)}番目の要素`;
   return 'この値';
 }
@@ -154,6 +193,11 @@ const TYPE_NAMES: Record<string, string> = {
 
 function plainPath(path: readonly PropertyKey[]): PathSegment[] {
   return path.filter((s): s is PathSegment => typeof s !== 'symbol');
+}
+
+/** 対応表・リストのどちらでもないという型の誤りだけの形は除き、最初に当てはまりそうな形のエラーを返す。 */
+function likelyBranch(branches: readonly (readonly z.core.$ZodIssue[])[]): readonly z.core.$ZodIssue[] | undefined {
+  return branches.find((b) => !(b.length === 1 && b[0]?.code === 'invalid_type' && b[0].path.length === 0));
 }
 
 /** zod のエラー1件を、場所つきの日本語のメッセージ（1件以上）にする。 */
@@ -196,9 +240,14 @@ function describeZodIssue(issue: z.core.$ZodIssue, data: unknown): RuleIssue[] {
     case 'unrecognized_keys':
       return issue.keys.map((key) => ({
         path: [...path, key],
-        message: `項目「${key}」は仕様にありません。書き間違いか、この版では使えない項目です`,
+        message: `項目「${safeKey(key)}」は仕様にありません。書き間違いか、この版では使えない項目です`,
       }));
-    case 'invalid_union':
+    case 'invalid_union': {
+      // 既定の文言のままなら、どの形にも当てはまらなかった理由を、当てはまりそうな形のエラーから取り出す
+      const detail = issue.message === 'Invalid input' ? likelyBranch(issue.errors) : undefined;
+      if (detail === undefined) return one(issue.message);
+      return detail.flatMap((d) => describeZodIssue({ ...d, path: [...issue.path, ...d.path] }, data));
+    }
     case 'invalid_format':
     case 'custom':
       return one(issue.message);
@@ -286,6 +335,12 @@ export function parseTour(yamlText: string, fileName: string): ParseResult {
     ]);
   }
 
+  if (exceedsDepth(data, 1)) {
+    return fail([
+      make(null, [], `入れ子が深すぎます（エイリアスの展開後）。深さは${String(TOUR_LIMITS.yamlDepth)}までです`),
+    ]);
+  }
+
   // 4. 形式
   const parsed = TourSchema.safeParse(data);
   if (!parsed.success) {
@@ -300,6 +355,8 @@ export function parseTour(yamlText: string, fileName: string): ParseResult {
   return { ok: true, tour: parsed.data, warnings };
 
   function toIssue(found: RuleIssue): Issue {
-    return make(lineOfPath(doc, lc, found.path), found.path, found.message);
+    // 行番号は元のキーで探し、表示する場所はキーを整えた形にする
+    const shown = found.path.map((seg) => (typeof seg === 'string' ? safeKey(seg) : seg));
+    return make(lineOfPath(doc, lc, found.path), shown, found.message);
   }
 }

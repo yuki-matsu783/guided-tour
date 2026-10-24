@@ -77,7 +77,12 @@ export const DISCARD_REASONS = [
   'senderMismatch',
 ] as const;
 
-const internalId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+/** ツアーの役割名（空でない文字列）。長さは64文字まで、制御文字は不可。 */
+const tourRole = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[^\p{Cc}]+$/u);
 const index = z.number().int().nonnegative();
 
 export const eventSchemas = {
@@ -88,7 +93,7 @@ export const eventSchemas = {
     counts: z.array(TierCountStrictSchema).max(5),
   }),
   'tabs.status': z.strictObject({
-    role: internalId,
+    role: tourRole,
     status: z.enum(['ok', 'donePage', 'mismatch', 'missing', 'unsupported']),
   }),
   'session.goto': z.strictObject({ from: index, to: index, accepted: z.boolean() }),
@@ -128,7 +133,13 @@ export function errorFields(
   thrown: unknown,
   reason: ErrorReason = 'unknown',
 ): EventFields['error'] {
-  const raw = thrown instanceof Error ? thrown.name : 'Unknown';
-  const name = ERROR_NAMES.find((n) => n === raw) ?? 'Unknown';
+  let name: ErrorName;
+  try {
+    // name が getter で、読むと投げることがある
+    const raw = thrown instanceof Error ? thrown.name : 'Unknown';
+    name = ERROR_NAMES.find((n) => n === raw) ?? 'Unknown';
+  } catch {
+    name = 'Unknown';
+  }
   return { name, reason };
 }

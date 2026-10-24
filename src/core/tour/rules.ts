@@ -1,7 +1,7 @@
 /**
  * ツアー全体にまたがる検証の規則（スキーマだけでは書けないもの）。
  * 入力は構造の検証を通った `Tour`。戻り値は場所（path）と日本語のメッセージで、行番号は付けない（parseTour が付ける）。
- * 見るもの: origins との突き合わせ、page ステップの URL、役割（tab）の定義、step の id の重複、必須の照合がない警告。
+ * 見るもの: origins との突き合わせ、page ステップの URL、役割（tab）の定義、step の id の重複、必須の照合・name がない警告。
  */
 import type { Target, Tour, UrlCond } from './schema.ts';
 
@@ -60,8 +60,23 @@ function isWeakTarget(t: Target): boolean {
   return true;
 }
 
+/** `role` があるのに `name` がない target か（役割だけでは同じ役割の別の要素と取り違える）。 */
+function isRoleWithoutName(t: Target): boolean {
+  return t.role !== undefined && t.name === undefined;
+}
+
 const WEAK_MESSAGE =
   '手がかりが testId・css だけで、require も名前の候補（name・label・text）もありません。別の要素と取り違えても気づけないため、require か名前の候補を足してください';
+
+const ROLE_WITHOUT_NAME_MESSAGE =
+  'role だけで name がありません。同じ役割の要素が複数あると別の要素と取り違えるため、name を足してください';
+
+/** target の警告のメッセージ。警告がなければ undefined（1つの target に警告は1件）。 */
+function targetWarning(t: Target): string | undefined {
+  if (isWeakTarget(t)) return WEAK_MESSAGE;
+  if (isRoleWithoutName(t)) return ROLE_WITHOUT_NAME_MESSAGE;
+  return undefined;
+}
 
 /** ツアー全体の規則を検査する。エラーがあっても、見つかったものはすべて返す。 */
 export function validateTourRules(tour: Tour): RuleResult {
@@ -100,12 +115,10 @@ export function validateTourRules(tour: Tour): RuleResult {
       }
     }
 
-    if (step.target !== undefined && isWeakTarget(step.target)) {
-      warnings.push({ path: [...at, 'target'], message: WEAK_MESSAGE });
-    }
-    if (step.done?.target !== undefined && isWeakTarget(step.done.target)) {
-      warnings.push({ path: [...at, 'done', 'target'], message: WEAK_MESSAGE });
-    }
+    const stepWarning = step.target === undefined ? undefined : targetWarning(step.target);
+    if (stepWarning !== undefined) warnings.push({ path: [...at, 'target'], message: stepWarning });
+    const doneWarning = step.done?.target === undefined ? undefined : targetWarning(step.done.target);
+    if (doneWarning !== undefined) warnings.push({ path: [...at, 'done', 'target'], message: doneWarning });
   });
 
   return { errors, warnings };

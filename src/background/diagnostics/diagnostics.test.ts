@@ -3,6 +3,7 @@
  */
 import { IDBFactory } from 'fake-indexeddb';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import {
   DiagnosticRecordSchema,
   STORE,
@@ -22,6 +23,8 @@ interface Env {
   diag: Diagnostics;
   clock: { t: number; fixed: boolean };
   failing: { value: boolean };
+  /** 0 より大きい間、getDb の呼び出しを1回ごとに閉じた接続で失敗させる（1回目だけ失敗させる試験用）。 */
+  failFirst: { remaining: number };
   failures: EventFields['error'][];
 }
 
@@ -32,16 +35,21 @@ async function setup(): Promise<Env> {
   closed.close();
   const clock = { t: 1000, fixed: false };
   const failing = { value: false };
+  const failFirst = { remaining: 0 };
   const failures: EventFields['error'][] = [];
   const diag = createDiagnostics({
-    getDb: () => Promise.resolve(failing.value ? closed : db),
+    getDb: () => {
+      const bad = failing.value || failFirst.remaining > 0;
+      if (failFirst.remaining > 0) failFirst.remaining -= 1;
+      return Promise.resolve(bad ? closed : db);
+    },
     now: () => {
       if (!clock.fixed) clock.t += 1;
       return clock.t;
     },
     onFailure: (f) => failures.push(f),
   });
-  return { db, closed, diag, clock, failing, failures };
+  return { db, closed, diag, clock, failing, failFirst, failures };
 }
 
 function summary(
@@ -61,6 +69,12 @@ function summary(
 const rawRecords = (db: IDBDatabase) =>
   withTx(db, STORE.diagnostics, 'readonly', (tx) =>
     readAll(tx.objectStore(STORE.diagnostics), DiagnosticRecordSchema),
+  );
+
+/** スキーマで読み直す前の、保存された生の値。 */
+const storedValues = (db: IDBDatabase): Promise<unknown[]> =>
+  withTx(db, STORE.diagnostics, 'readonly', (tx) =>
+    requestToPromise(tx.objectStore(STORE.diagnostics).getAll()),
   );
 
 async function seed(db: IDBDatabase, rows: DiagnosticRecord[]): Promise<void> {
@@ -138,7 +152,7 @@ describe('reasons からの記録', () => {
 
   it('T-DIAG-08: 記録にページの文字列（読み上げ名・表示文字列）と URL が含まれない', async () => {
     await rec('a', summary(['degraded', 'conflict']));
-    const text = JSON.stringify(await rawRecords(env.db));
+    const text = JSON.stringify(await storedValues(env.db));
     expect(text).not.toMatch(/https?:\/\//);
     expect(text).not.toContain('name');
   });
@@ -151,10 +165,19 @@ describe('reasons からの記録', () => {
       counts: [{ tier: 1, collected: 1, required: 1, visible: 1, text: '注文' }],
     };
     await rec('a', dirty);
-    const text = JSON.stringify(await rawRecords(env.db));
+    const stored = await storedValues(env.db);
+    const text = JSON.stringify(stored);
     expect(text).not.toContain('購入');
     expect(text).not.toContain('example.com');
     expect(text).not.toContain('注文');
+    // 保存された生の値に余計な項目がない（トップレベルも counts の中も）
+    const row = z.looseObject({ counts: z.array(z.looseObject({})) }).parse(stored[0]);
+    expect(Object.keys(row).sort()).toEqual(
+      ['counts', 'lastAt', 'lastKey', 'reason', 'stepId', 'tier', 'topTier', 'total', 'tourId'],
+    );
+    expect(Object.keys(row.counts[0] ?? {}).sort()).toEqual(
+      ['collected', 'required', 'tier', 'visible'],
+    );
   });
 
   it('T-DIAG-10: ログレベルに関係なく保守記録は保存される（ロガーに依存しない）', async () => {
@@ -199,12 +222,13 @@ describe('数え方', () => {
     expect((await env.diag.list())[0]?.total).toBe(1);
   });
 
-  it('T-DIAG-14: 同じ sessionId で gen が違うと total が増える（3→4 で 2、3→4→3 で 3）', async () => {
+  it('T-DIAG-14: 同じ stepId を gen 1 と gen 3 で表示したとき（間に別ステップの gen 2 がある）、total が 2 になる', async () => {
+    await rec('a', summary(['missing']), 's1', 1);
+    await rec('b', summary(['missing']), 's1', 2);
     await rec('a', summary(['missing']), 's1', 3);
-    await rec('a', summary(['missing']), 's1', 4);
-    expect((await env.diag.list())[0]?.total).toBe(2);
-    await rec('a', summary(['missing']), 's1', 3);
-    expect((await env.diag.list())[0]?.total).toBe(3);
+    const list = await env.diag.list();
+    expect(list.find((r) => r.stepId === 'a')?.total).toBe(2);
+    expect(list.find((r) => r.stepId === 'b')?.total).toBe(1);
   });
 
   it('T-DIAG-15: gen が同じで sessionId が違うと total が 2 になる', async () => {
@@ -447,6 +471,41 @@ describe('書き出しと文字列を持たないこと', () => {
     expect(Object.keys(entry ?? {}).sort()).toEqual(
       ['counts', 'lastAt', 'reason', 'stepId', 'tier', 'topTier', 'total', 'tourId'],
     );
+  });
+
+  it('T-DIAG-46a: 1回目だけ失敗したとき、古いものを消してから再試行し、2回目で保存される', async () => {
+    // 古い順に 10 件。再試行の前に、最も古い1割（1件）が消える
+    await seed(env.db, Array.from({ length: 10 }, (_, i) => seedRow(i, 100 + i)));
+    env.failFirst.remaining = 1;
+    await expect(rec('new', summary(['missing']))).resolves.toBeUndefined();
+    expect(env.failures).toEqual([]);
+    const steps = (await env.diag.list()).map((r) => r.stepId);
+    expect(steps).not.toContain('s0000');
+    expect(steps).toContain('s0001');
+    expect(steps).toContain('new');
+    expect(steps).toHaveLength(10);
+  });
+
+  it('T-DIAG-46b: 件数が10件未満でも、再試行の前に最低1件の最も古いものを消す', async () => {
+    await seed(env.db, [seedRow(0, 100), seedRow(1, 200)]);
+    env.failFirst.remaining = 1;
+    await rec('new', summary(['missing']));
+    expect((await env.diag.list()).map((r) => r.stepId)).toEqual(['new', 's0001']);
+  });
+
+  it('T-DIAG-46c: onFailure が例外を投げても、record は例外を伝えず次の record も動く', async () => {
+    const throwing = createDiagnostics({
+      getDb: () => Promise.resolve(env.failing.value ? env.closed : env.db),
+      now: () => 1,
+      onFailure: () => {
+        throw new Error('onFailure が投げた');
+      },
+    });
+    env.failing.value = true;
+    await expect(throwing.record('t', 'a', 's1', 1, summary(['missing']))).resolves.toBeUndefined();
+    env.failing.value = false;
+    await throwing.record('t', 'b', 's1', 2, summary(['missing']));
+    expect((await throwing.list()).map((r) => r.stepId)).toEqual(['b']);
   });
 
   it('T-DIAG-46: 保存に失敗しても例外は外へ伝わらず、古いものを消して1回だけ再試行し、だめなら捨てる', async () => {

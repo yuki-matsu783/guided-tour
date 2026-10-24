@@ -8,14 +8,19 @@ export function normalizeName(value: string): string {
   return value.normalize('NFKC').replace(/\s+/gu, ' ').trim().toLowerCase();
 }
 
+/** 正規化して空文字になる候補は、何にでも一致してしまうので照合に使わない。 */
+function usableCandidates(candidates: readonly string[]): string[] {
+  return candidates.map(normalizeName).filter((c) => c !== '');
+}
+
 /** 正規化後の完全一致。候補のいずれかに一致すれば真。 */
 export function matchesAnyName(value: string, candidates: readonly string[]): boolean {
   const normalized = normalizeName(value);
-  return candidates.some((c) => normalizeName(c) === normalized);
+  return usableCandidates(candidates).some((c) => c === normalized);
 }
 
 /** 正規化後の部分一致。候補のいずれかを含めば真。 */
 export function containsAnyName(value: string, candidates: readonly string[]): boolean {
   const normalized = normalizeName(value);
-  return candidates.some((c) => normalized.includes(normalizeName(c)));
+  return usableCandidates(candidates).some((c) => normalized.includes(c));
 }

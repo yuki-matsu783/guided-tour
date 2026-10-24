@@ -8,7 +8,32 @@ import MarkdownIt from 'markdown-it';
 import type { Token } from 'markdown-it';
 import { isAllowedImageUrl, parseHttpLink, toHostnameSet } from './urls';
 
-const md = new MarkdownIt({ html: false, linkify: false });
+/** 入れ子の上限（markdown-it の既定と同じ）。 */
+const MAX_NESTING = 100;
+
+/** 入れ子を作るブロックの規則と、1回開くときに増える入れ子の段数（リストは list と item の2段）。 */
+const CONTAINER_RULE_COST: Readonly<Record<string, number>> = { blockquote: 1, list: 2 };
+
+const md = new MarkdownIt({ html: false, linkify: false, maxNesting: MAX_NESTING });
+
+/**
+ * markdown-it は入れ子の上限を超えると、残りの本文を黙って捨てる。
+ * 上限に届く位置では引用・リストを開かない規則にして、超えた分は段落（文字列）として出す。
+ */
+function keepTextBeyondNesting(parser: InstanceType<typeof MarkdownIt>): void {
+  for (const rule of Array.from(parser.block.ruler.__rules__)) {
+    const cost = CONTAINER_RULE_COST[rule.name];
+    if (cost === undefined) continue;
+    const original = rule.fn;
+    parser.block.ruler.at(
+      rule.name,
+      (state, startLine, endLine, silent) =>
+        state.level + cost >= MAX_NESTING ? false : original(state, startLine, endLine, silent),
+      { alt: rule.alt },
+    );
+  }
+}
+keepTextBeyondNesting(md);
 
 /** 要素にそのまま対応させるトークンの種類（開き側）。 */
 const SIMPLE_TAGS: Readonly<Record<string, string>> = {
@@ -86,7 +111,13 @@ function open(token: Token, parent: Node, ctx: Context): Frame {
   if (token.hidden) return { node: parent, after: null };
 
   const tag = elementFor(token);
-  if (tag !== null) return { node: attach(parent, document.createElement(tag)), after: null };
+  if (tag !== null) {
+    const el = attach(parent, document.createElement(tag));
+    // 番号付きリストの開始番号。数字だけのときに限る
+    const start = tag === 'ol' ? attr(token, 'start') : null;
+    if (start !== null && /^\d{1,9}$/u.test(start)) el.setAttribute('start', start);
+    return { node: el, after: null };
+  }
 
   if (token.type === 'th_open' || token.type === 'td_open') {
     const cell = attach(parent, document.createElement(token.type === 'th_open' ? 'th' : 'td'));
@@ -186,10 +217,34 @@ function leaf(token: Token, parent: Node, ctx: Context): void {
   }
 }
 
+/** 子トークンの文字列だけを連ねた平文（`**` などの記法を残さない）。 */
+function plainText(tokens: readonly Token[]): string {
+  let text = '';
+  for (const token of tokens) {
+    if (token.type === 'text' || token.type === 'code_inline') text += token.content;
+    else if (token.type === 'softbreak' || token.type === 'hardbreak') text += '\n';
+    else if (token.type === 'image') text += plainText(token.children ?? []);
+  }
+  return text;
+}
+
+/**
+ * 画像のパスを decodeURIComponent で戻す（取り込みは同じ関数で戻したパスで保存している。`img%2Fa.png` は `img/a.png`）。
+ * 戻せない（不正な %）ときは null。
+ */
+function decodePath(src: string): string | null {
+  try {
+    return decodeURIComponent(src);
+  } catch {
+    return null;
+  }
+}
+
 /** 画像を `img` にする。解決できない・許可されない URL・読み込み失敗のときは代替文を表示する。 */
 function renderImage(token: Token, parent: Node, ctx: Context): void {
-  const alt = token.content;
-  const resolved = ctx.resolveAsset(attr(token, 'src') ?? '');
+  const alt = plainText(token.children ?? []);
+  const path = decodePath(attr(token, 'src') ?? '');
+  const resolved = path === null ? null : ctx.resolveAsset(path);
   if (resolved === null || !isAllowedImageUrl(resolved)) {
     parent.appendChild(document.createTextNode(alt));
     return;

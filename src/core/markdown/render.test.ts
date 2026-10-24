@@ -226,9 +226,19 @@ describe('リンク', () => {
     expect(link('[x](HTTPS://example.com/)').querySelector('a')).not.toBeNull();
   });
   it('T-MD-29: 空白・制御文字で方式を隠したリンクは a にならない', () => {
+    // markdown-it がリンクと解釈し、parseHttpLink まで届く入力（届いた印は「文字 (href)」の表示）
+    for (const md of [
+      '[x](java%09script:alert(1))',
+      '[x](jav&#x09;ascript:alert(1))',
+      '[x](<jav\tascript:alert(1)>)',
+      '[x](java&#x20;script:alert(1))',
+    ]) {
+      const c = link(md);
+      expect(c.querySelector('a')).toBeNull();
+      expect(c.textContent).toMatch(/^x \(.*script:alert\(1\)\)$|^x \(.*ascript:alert\(1\)\)$/u);
+    }
+    // リンクと解釈されない入力も a にならない
     expect(link('[x](java\tscript:alert(1))').querySelector('a')).toBeNull();
-    expect(link('[x](java%09script:alert(1))').querySelector('a')).toBeNull();
-    expect(link('[x](jav&#x09;ascript:alert(1))').querySelector('a')).toBeNull();
   });
   it('T-MD-30: 相対パスと //example.com は a にならず文字列で表示される', () => {
     for (const url of ['./a.html', '/a', '../a', '//example.com/a']) {
@@ -359,5 +369,47 @@ describe('描画の呼び出し方', () => {
       renderMarkdown('', c, asExt, []);
     }).not.toThrow();
     expect(c.childNodes).toHaveLength(0);
+  });
+});
+
+describe('第1段のレビュー指摘の修正（Markdown）', () => {
+  it('R-MD-1: 番号付きリストの開始番号が ol の start になり、1 始まりでは付かない', () => {
+    expect(render('3. a\n4. b').querySelector('ol')?.getAttribute('start')).toBe('3');
+    expect(render('1. a\n2. b').querySelector('ol')?.hasAttribute('start')).toBe(false);
+  });
+
+  it('R-MD-2: 画像の代替文は記法を残さない平文になる', () => {
+    const c = render('![**太字** と `コード`](a.png)');
+    expect(c.querySelector('img')?.getAttribute('alt')).toBe('太字 と コード');
+    const failed = render('![**太字**](a.png)', { resolve: () => null });
+    expect(failed.textContent).toBe('太字');
+  });
+
+  it('R-MD-3: resolveAsset に渡すパスは decodeURIComponent したもの', () => {
+    const resolve = vi.fn((s: string): string | null => `${EXT}${s}`);
+    render('![a](%E7%94%BB%E5%83%8F/x%20y.png)', { resolve });
+    expect(resolve).toHaveBeenCalledWith('画像/x y.png');
+  });
+
+  it('R-MD-3: %2F を含むパスは / に戻して渡す（取り込み側の保存形と同じ）', () => {
+    const resolve = vi.fn((s: string): string | null => `${EXT}${s}`);
+    const c = render('![x](img%2Fa.png)', { resolve });
+    expect(resolve).toHaveBeenCalledWith('img/a.png');
+    expect(c.querySelector('img')?.getAttribute('src')).toBe(`${EXT}img/a.png`);
+  });
+
+  it('R-MD-3: decode に失敗したら resolveAsset を呼ばず代替文を表示する', () => {
+    const resolve = vi.fn((s: string): string | null => `${EXT}${s}`);
+    const c = render('![代替](%E0%A4%A.png)', { resolve });
+    expect(resolve).not.toHaveBeenCalled();
+    expect(c.querySelector('img')).toBeNull();
+    expect(c.textContent).toBe('代替');
+  });
+
+  it('R-MD-4: 入れ子の上限を超えた入力でも本文が消えず、超えた分は文字列で出る', () => {
+    const c = render('>'.repeat(5000) + ' x');
+    expect(c.textContent).toContain('x');
+    const list = render('- '.repeat(500) + 'y');
+    expect(list.textContent).toContain('y');
   });
 });

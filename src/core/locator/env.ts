@@ -29,6 +29,27 @@ function isRenderedByStyle(el: Element, win: Window): boolean {
   return true;
 }
 
+/**
+ * `innerText` が無い環境向け。hidden 属性・display: none・visibility: hidden の子孫を除いた textContent を返す。
+ * 要素自身が非表示でも、子孫は順に判定する（visibility: hidden の中の visible な子孫は見える）。
+ */
+function visibleTextByStyle(root: Element, win: Window): string {
+  const parts: string[] = [];
+  const walk = (node: Node, parentHidden: boolean): void => {
+    if (node.nodeType === node.TEXT_NODE) {
+      if (!parentHidden) parts.push(node.textContent ?? '');
+      return;
+    }
+    if (!(node instanceof Element)) return;
+    const style = win.getComputedStyle(node);
+    if (node.hasAttribute('hidden') || style.display === 'none') return;
+    const hidden = style.visibility === 'hidden' || style.visibility === 'collapse';
+    for (const child of Array.from(node.childNodes)) walk(child, hidden);
+  };
+  walk(root, false);
+  return parts.join('');
+}
+
 export function defaultEnv(win: Window): LocatorEnv {
   return {
     isVisible(el) {
@@ -45,6 +66,10 @@ export function defaultEnv(win: Window): LocatorEnv {
         getComputedStyle: win.getComputedStyle.bind(win),
         computedStyleSupportsPseudoElements: true,
       }),
+    visibleText(el) {
+      if (el instanceof HTMLElement && 'innerText' in el) return el.innerText;
+      return visibleTextByStyle(el, win);
+    },
     viewport() {
       const root = win.document.documentElement;
       return {

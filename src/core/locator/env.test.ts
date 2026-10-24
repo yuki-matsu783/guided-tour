@@ -114,3 +114,19 @@ describe('defaultEnv の役割・名前・ホスト', () => {
     expect(other && env.isOwnHost(other)).toBe(false);
   });
 });
+
+describe('defaultEnv の見えている文字列', () => {
+  it('R-LOC-1: innerText がある環境では、その値を返す', () => {
+    const el = makeButton();
+    Object.defineProperty(el, 'innerText', { configurable: true, value: '見えている' });
+    expect(defaultEnv(window).visibleText(el)).toBe('見えている');
+  });
+
+  it('R-LOC-1: innerText が無い環境では、hidden・display: none・visibility: hidden の子孫を除いた文字列を返す', () => {
+    document.body.innerHTML =
+      '<button id="b">保<span hidden>あ</span><span style="display: none">い</span>' +
+      '<span style="visibility: hidden">う</span>存<span>す</span></button>';
+    const el = document.getElementById('b');
+    expect(el && defaultEnv(window).visibleText(el)).toBe('保存す');
+  });
+});

@@ -26,14 +26,29 @@ const FORM_CONTROL_ROLES = new Set([
 /** 読み替え先が表示領域を覆うかの判定の許容（px）。 */
 const COVER_TOLERANCE = 1;
 
+/** 手がかり（候補の配列か `{ values, within? }`）。 */
+type Clue = NonNullable<LocatorTarget['name']>;
+
+/** 手がかりの候補。書かれていなければ空。 */
+function clueValues(clue: Clue | undefined): readonly string[] {
+  if (clue === undefined) return [];
+  return Array.isArray(clue) ? clue : clue.values;
+}
+
+/** 手がかりに書かれた範囲の上書き。なければ undefined、`page` はページ全体の明示。 */
+function clueWithin(clue: Clue | undefined): LocatorWithin | 'page' | undefined {
+  if (clue === undefined || Array.isArray(clue)) return undefined;
+  return clue.within;
+}
+
 /** 段階の手がかりが書かれているか。 */
 function hasClue(target: LocatorTarget, tier: Tier): boolean {
   switch (tier) {
     case 1: return target.tourId !== undefined || target.testId !== undefined;
     case 2: return target.role !== undefined;
-    case 3: return (target.label?.length ?? 0) > 0;
-    case 4: return (target.text?.length ?? 0) > 0;
-    case 5: return (target.css?.length ?? 0) > 0;
+    case 3: return clueValues(target.label).length > 0;
+    case 4: return clueValues(target.text).length > 0;
+    case 5: return clueValues(target.css).length > 0;
   }
 }
 
@@ -70,13 +85,13 @@ function descendants(root: ParentNode, env: LocatorEnv): Element[] {
 function byRoleAndName(
   root: ParentNode,
   role: string,
-  names: readonly string[] | undefined,
+  names: readonly string[],
   env: LocatorEnv,
 ): Element[] {
   return descendants(root, env).filter(
     (el) =>
       env.computeRole(el) === role &&
-      (names === undefined || names.length === 0 || matchesAnyName(env.computeName(el), names)),
+      (names.length === 0 || matchesAnyName(env.computeName(el), names)),
   );
 }
 
@@ -100,20 +115,30 @@ function resolveWithin(within: LocatorWithin, doc: Document, env: LocatorEnv): E
   return found.length === 1 && only ? only : null;
 }
 
-/** 段階4の「最も内側」: 一致した要素のうち、別の一致した要素を子孫に持つものを除く。 */
-function keepInnermost(matched: Element[]): Element[] {
-  return matched.filter((el) => !matched.some((other) => other !== el && el.contains(other)));
+/**
+ * 段階4の「最も内側」: 一致した要素のうち、別の一致した要素を子孫に持つものを除く。
+ * 各要素の祖先を辿り、集合に入っている祖先を外す（要素数 × 深さ）。
+ */
+function keepInnermost(matched: readonly Element[]): Element[] {
+  const inSet = new Set<Element>(matched);
+  const outer = new Set<Element>();
+  for (const el of matched) {
+    for (let node = el.parentElement; node; node = node.parentElement) {
+      if (inSet.has(node)) outer.add(node);
+    }
+  }
+  return matched.filter((el) => !outer.has(el));
 }
 
-function collectTier1(target: LocatorTarget, doc: Document, env: LocatorEnv): Element[] {
+function collectTier1(target: LocatorTarget, root: ParentNode, env: LocatorEnv): Element[] {
   const found = new Set<Element>();
   if (target.tourId !== undefined) {
-    for (const el of safeQueryAll(doc, '[data-tour-id]')) {
+    for (const el of safeQueryAll(root, '[data-tour-id]')) {
       if (el.getAttribute('data-tour-id') === target.tourId) found.add(el);
     }
   }
   if (target.testId !== undefined) {
-    for (const el of safeQueryAll(doc, '[data-testid]')) {
+    for (const el of safeQueryAll(root, '[data-testid]')) {
       if (el.getAttribute('data-testid') === target.testId) found.add(el);
     }
   }
@@ -121,19 +146,52 @@ function collectTier1(target: LocatorTarget, doc: Document, env: LocatorEnv): El
 }
 
 function collectTier4(target: LocatorTarget, root: ParentNode, env: LocatorEnv): Element[] {
-  const texts = target.text ?? [];
+  const texts = clueValues(target.text);
   const selector = (target.textTag ?? DEFAULT_TEXT_TAGS).join(',');
   const test = target.match === 'contains' ? containsAnyName : matchesAnyName;
-  const matched = safeQueryAll(root, selector).filter(
-    (el) => !isInsideOwnHost(el, env) && test(el.textContent, texts),
+  // 最も内側への絞り込みは、必須の照合と表示の確認の後に evaluate が行う
+  return safeQueryAll(root, selector).filter(
+    (el) => !isInsideOwnHost(el, env) && test(env.visibleText(el), texts),
   );
-  return keepInnermost(matched);
+}
+
+/** header・footer が banner・contentinfo にならない祖先（HTML-AAM）。 */
+const SECTIONING_TAGS = new Set(['article', 'aside', 'main', 'nav', 'section']);
+
+/** aria-label か、中身のある aria-labelledby で名前が付いているか。 */
+function hasLabelAttribute(el: Element): boolean {
+  if ((el.getAttribute('aria-label') ?? '').trim() !== '') return true;
+  const ids = (el.getAttribute('aria-labelledby') ?? '').split(/\s+/u).filter((id) => id !== '');
+  return ids.some((id) => el.ownerDocument.getElementById(id) !== null);
+}
+
+/**
+ * ランドマークの役割を HTML-AAM に合わせて求める。
+ * role 属性があればその計算結果を使う。header・footer は sectioning 要素の中では banner・contentinfo にならず、
+ * section・form は名前（aria-label・aria-labelledby）があるときだけ region・form になる。
+ */
+function landmarkRole(el: Element, env: LocatorEnv): string | null {
+  const role = env.computeRole(el);
+  if ((el.getAttribute('role') ?? '').trim() !== '') return role;
+  switch (el.localName) {
+    case 'header':
+    case 'footer':
+      for (let node = el.parentElement; node; node = node.parentElement) {
+        if (SECTIONING_TAGS.has(node.localName)) return null;
+      }
+      return role;
+    case 'section':
+    case 'form':
+      return hasLabelAttribute(el) ? role : null;
+    default:
+      return role;
+  }
 }
 
 /** 領域（ランドマーク）の中にあるか。要素自身は数えない。 */
 function isInRegion(el: Element, region: string, env: LocatorEnv): boolean {
   for (let node = el.parentElement; node; node = node.parentElement) {
-    if (env.computeRole(node) === region) return true;
+    if (landmarkRole(node, env) === region) return true;
   }
   return false;
 }
@@ -141,10 +199,9 @@ function isInRegion(el: Element, region: string, env: LocatorEnv): boolean {
 function satisfiesRequire(el: Element, require: NonNullable<LocatorTarget['require']>, env: LocatorEnv): boolean {
   if (require.role !== undefined && env.computeRole(el) !== require.role) return false;
   if (require.inputType !== undefined) {
-    if (el.localName !== 'input') return false;
-    // type 属性が無い input は text として扱う
-    const type = (el.getAttribute('type') ?? 'text').toLowerCase();
-    if (type !== require.inputType.toLowerCase()) return false;
+    // ブラウザが正規化した type（属性が無い・未知の値は text）で比べる
+    if (el.localName !== 'input' || !('type' in el) || typeof el.type !== 'string') return false;
+    if (el.type.toLowerCase() !== require.inputType.toLowerCase()) return false;
   }
   if (require.region !== undefined && !isInRegion(el, require.region, env)) return false;
   if (require.name !== undefined && !matchesAnyName(env.computeName(el), require.name)) return false;
@@ -155,18 +212,24 @@ function satisfiesRequire(el: Element, require: NonNullable<LocatorTarget['requi
 function isIneligible(el: Element, env: LocatorEnv): boolean {
   if (el.localName === 'html' || el.localName === 'body') return true;
   const { width, height } = env.viewport();
+  // 表示領域の大きさが分からないときは判定しない
+  if (width <= 0 || height <= 0) return false;
   const r = el.getBoundingClientRect();
+  // 表示領域を包み、かつ表示領域より大きくない要素だけが「覆う」。大きいフォーム・表は採用する
   return (
     r.left <= COVER_TOLERANCE &&
     r.top <= COVER_TOLERANCE &&
     r.right >= width - COVER_TOLERANCE &&
-    r.bottom >= height - COVER_TOLERANCE
+    r.bottom >= height - COVER_TOLERANCE &&
+    r.right - r.left <= width + COVER_TOLERANCE &&
+    r.bottom - r.top <= height + COVER_TOLERANCE
   );
 }
 
 function closestOrNull(el: Element, selector: string): Element | null {
   try {
-    return el.closest(selector);
+    // 操作対象自身は含めず、親から探す
+    return el.parentElement?.closest(selector) ?? null;
   } catch {
     return null;
   }
@@ -181,17 +244,22 @@ interface Attempt {
 
 /** 処理3〜7: 必須の照合、表示の確認、一意性、読み替え、不適格の確認。 */
 function evaluate(
+  tier: Tier,
   candidates: Element[],
   target: LocatorTarget,
   env: LocatorEnv,
   allowHidden: boolean,
 ): Attempt {
   const require = target.require;
-  const required = require ? candidates.filter((el) => satisfiesRequire(el, require, env)) : candidates;
+  // 段階4は、各段階で絞った後に最も内側だけを残す
+  const settle = (els: Element[]): Element[] => (tier === 4 ? keepInnermost(els) : els);
+  const requiredAll = require ? candidates.filter((el) => satisfiesRequire(el, require, env)) : candidates;
+  const visibleAll = allowHidden ? requiredAll : requiredAll.filter((el) => env.isVisible(el));
+  const required = settle(requiredAll);
+  const visible = settle(visibleAll);
   // 絞る前がちょうど1件で、それが捨てられたときだけ矛盾
-  const conflict = candidates.length === 1 && required.length === 0;
-  const visible = allowHidden ? required : required.filter((el) => env.isVisible(el));
-  const counts = { collected: candidates.length, required: required.length, visible: visible.length };
+  const conflict = settle(candidates).length === 1 && required.length === 0;
+  const counts = { collected: settle(candidates).length, required: required.length, visible: visible.length };
 
   const [only] = visible;
   // 一意性の確認は読み替えの前に行う（同じ祖先に読み替えられる2件は採用しない）
@@ -204,6 +272,17 @@ function evaluate(
   return { counts, conflict, adopted: { target: only, highlightEl } };
 }
 
+/** 段階の手がかりのうち、範囲を上書きできるもの。段階1は上書きできない。 */
+function clueOfTier(tier: Tier, target: LocatorTarget): Clue | undefined {
+  switch (tier) {
+    case 1: return undefined;
+    case 2: return target.name;
+    case 3: return target.label;
+    case 4: return target.text;
+    case 5: return target.css;
+  }
+}
+
 /** 段階の候補の集まりを、試行の単位ごとに返す。範囲の解決に失敗したら空配列（試行なし）。 */
 function collectTries(
   tier: Tier,
@@ -211,20 +290,21 @@ function collectTries(
   doc: Document,
   env: LocatorEnv,
 ): Element[][] | null {
-  // 処理1: 探す範囲。段階1（ID は文書全体で探す）と段階4（表示文字列）は範囲を使わない
+  // 処理1: 探す範囲。その段階の手がかりの within（`page` はページ全体）、なければ target.within。段階1は target.within
+  const within = clueWithin(clueOfTier(tier, target)) ?? target.within;
   let root: ParentNode = doc;
-  if (target.within && (tier === 2 || tier === 3 || tier === 5)) {
-    const scope = resolveWithin(target.within, doc, env);
+  if (within !== undefined && within !== 'page') {
+    const scope = resolveWithin(within, doc, env);
     if (!scope) return null;
     root = scope;
   }
   // 処理2: 候補を集める
   switch (tier) {
-    case 1: return [collectTier1(target, doc, env)];
-    case 2: return [byRoleAndName(root, target.role ?? '', target.name, env)];
-    case 3: return [byLabel(root, target.label ?? [], env)];
-    case 4: return [collectTier4(target, doc, env)];
-    case 5: return (target.css ?? []).map((css) => safeQueryAll(root, css).filter((el) => !isInsideOwnHost(el, env)));
+    case 1: return [collectTier1(target, root, env)];
+    case 2: return [byRoleAndName(root, target.role ?? '', clueValues(target.name), env)];
+    case 3: return [byLabel(root, clueValues(target.label), env)];
+    case 4: return [collectTier4(target, root, env)];
+    case 5: return clueValues(target.css).map((css) => safeQueryAll(root, css).filter((el) => !isInsideOwnHost(el, env)));
   }
 }
 
@@ -232,7 +312,7 @@ function collectTries(
 function hasNameMismatch(tier: Tier, target: LocatorTarget, el: Element, env: LocatorEnv): boolean {
   if (tier !== 1 && tier !== 5) return false;
   if (target.require?.name !== undefined) return false;
-  const names = [...(target.name ?? []), ...(target.label ?? []), ...(target.text ?? [])];
+  const names = [...clueValues(target.name), ...clueValues(target.label), ...clueValues(target.text)];
   if (names.length === 0) return false;
   return !matchesAnyName(env.computeName(el), names);
 }
@@ -241,10 +321,10 @@ function hasNameMismatch(tier: Tier, target: LocatorTarget, el: Element, env: Lo
  * target から、一意に決まる操作対象とハイライトする要素を探す。
  *
  * 処理フロー:
- * 1. 手がかりが書かれた段階を、1〜5 の順に試す（最初の段階が `topTier`）。段階ごとに `within` を解決し、0件か2件以上ならその段階は失敗（ページ全体には広げない）
+ * 1. 手がかりが書かれた段階を、1〜5 の順に試す（最初の段階が `topTier`）。段階ごとに範囲を解決する（その段階の手がかりの `within`、なければ `target.within`。`page` かどちらもなければページ全体）。0件か2件以上ならその段階は失敗（ページ全体には広げない）
  * 2. 候補を集める（collectTries）。自前の表示のホスト要素とその中身は常に除外する。段階5は `css[]` の選択子ごとに別の試行にする
  * 3. 必須の照合で絞る（evaluate、satisfiesRequire）。絞る前がちょうど1件で捨てられたら `conflict` を記録する
- * 4. `allowHidden` がなければ、表示されていない候補を除く
+ * 4. `allowHidden` がなければ、表示されていない候補を除く。段階4は、各絞り込みの後に「最も内側」だけを残す
  * 5. 操作対象がちょうど1件か確認する。そうでなければ次の試行・次の段階へ進む
  * 6. `highlight.closest` があれば、ハイライトする要素を祖先に読み替える
  * 7. 読み替えた要素（読み替えがなければ操作対象）が表示されていて、`html`・`body`・表示領域全体を覆う要素でないか確認する（isIneligible）。不適格なら失敗として次へ進む
@@ -274,7 +354,7 @@ export function locate(
     }
     let last: Attempt | null = null;
     for (const candidates of tries) {
-      const attempt = evaluate(candidates, target, env, allowHidden);
+      const attempt = evaluate(tier, candidates, target, env, allowHidden);
       last = attempt;
       conflict ||= attempt.conflict;
       if (attempt.adopted) {

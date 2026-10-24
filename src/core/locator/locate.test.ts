@@ -264,13 +264,63 @@ describe('探す範囲（within）', () => {
     expect(r.counts[0]).toEqual({ tier: 2, collected: 0, required: 0, visible: 0 });
   });
 
-  it('T-LOC-30: within の失敗で段階2が失敗しても、範囲を使わない段階4は試され採用される', () => {
+  it('T-LOC-30: 段階2の within が解決できず段階2が失敗しても、within: page を明示した段階4の手がかりは試され採用される', () => {
     const r = run(
-      { role: 'button', name: ['保存'], text: ['保存'], within: { css: '.none' } },
+      { role: 'button', name: ['保存'], text: { values: ['保存'], within: 'page' }, within: { css: '.none' } },
       '<button id="a">保存</button>',
     );
     expect(r.tier).toBe(4);
     expect(idOf(r.target)).toBe('a');
+  });
+
+  it('T-LOC-30a: target.within があり上書きがないとき、段階1・4も範囲の内側だけを探し、外の要素を採用しない', () => {
+    const html =
+      '<div id="box"><button id="in" data-testid="t">保存</button></div>' +
+      '<button id="out" data-testid="t2">保存</button>';
+    expect(idOf(run({ testId: 't', within: { css: '#box' } }, html).target)).toBe('in');
+    expect(run({ testId: 't2', within: { css: '#box' } }, html).found).toBe(false);
+    expect(idOf(run({ text: ['保存'], within: { css: '#box' } }, html).target)).toBe('in');
+    const outer = '<div id="box"></div><button id="out">保存</button>';
+    expect(run({ text: ['保存'], within: { css: '#box' } }, outer).found).toBe(false);
+  });
+
+  it('T-LOC-30b: 段階4の手がかりに別の within を書くと、段階4だけがその範囲で探し、他の段階は target.within で探す', () => {
+    const html =
+      '<div id="a"><button id="a1" data-testid="x">保存</button></div>' +
+      '<div id="b"><button id="b1">保存</button></div>';
+    const base: LocatorTarget = { testId: 'x', text: { values: ['保存'], within: { css: '#b' } }, within: { css: '#a' } };
+    expect(idOf(run(base, html).target)).toBe('a1');
+    // 段階1が失敗すると、段階4は上書きした範囲 #b で探す
+    const r = run({ ...base, testId: 'none' }, html);
+    expect(r.tier).toBe(4);
+    expect(idOf(r.target)).toBe('b1');
+    // 段階4を target.within の #a で探していたら a1 が決まるので、#b の結果と区別できる
+    expect(idOf(run({ text: ['保存'], within: { css: '#a' } }, html).target)).toBe('a1');
+  });
+
+  it('T-LOC-30c: target.within が0件か2件以上のとき、上書きのない段階は失敗し、within: page の段階だけが試される', () => {
+    const html = '<div class="box"></div><div class="box"></div><button id="a" data-testid="t">保存</button>';
+    for (const css of ['.box', '.none']) {
+      const within = { css };
+      expect(run({ testId: 't', within }, html).found).toBe(false);
+      expect(run({ role: 'button', name: ['保存'], within }, html).found).toBe(false);
+      expect(run({ text: ['保存'], within }, html).found).toBe(false);
+      expect(run({ css: ['#a'], within }, html).found).toBe(false);
+      const r = run({ testId: 't', css: { values: ['#a'], within: 'page' }, within }, html);
+      expect(r.tier).toBe(5);
+      expect(idOf(r.target)).toBe('a');
+    }
+  });
+
+  it('R-LOC-30d: name・label・css の手がかりも { values, within } で書け、それぞれの範囲で探す', () => {
+    const html =
+      '<div id="a"><button id="a1">保存</button><input id="a2" aria-label="名前"><i id="a3" class="x"></i></div>' +
+      '<div id="b"><button id="b1">保存</button><input id="b2" aria-label="名前"><i id="b3" class="x"></i></div>';
+    const within = { css: '#b' };
+    expect(idOf(run({ role: 'button', name: { values: ['保存'], within }, within: { css: '#a' } }, html).target)).toBe('b1');
+    expect(idOf(run({ label: { values: ['名前'], within }, within: { css: '#a' } }, html).target)).toBe('b2');
+    expect(idOf(run({ css: { values: ['.x'], within }, within: { css: '#a' } }, html).target)).toBe('b3');
+    expect(idOf(run({ role: 'button', name: { values: ['保存'] }, within: { css: '#a' } }, html).target)).toBe('a1');
   });
 
   it('T-LOC-31: 範囲の外に同じ条件の要素があっても、内側の1件だけが対象になる', () => {
@@ -672,6 +722,120 @@ describe('名前の文字列を返さないこと', () => {
 
   it('T-LOC-100: 表示の判定は env で差し替えられ、偽を返した要素は表示されていないとみなす', () => {
     const r = run({ testId: 't' }, '<i data-testid="t"></i>', { isVisible: () => false });
+    expect(r.found).toBe(false);
+  });
+});
+
+describe('第1段のレビュー指摘の修正', () => {
+  it('R-LOC-1: 段階4の照合は env.visibleText の結果で行う（textContent では一致しても、見えていなければ一致しない）', () => {
+    const html = '<button id="b">保存<span data-gone>（非表示）</span></button>';
+    const visibleText = (el: Element): string => el.textContent.replace('（非表示）', '');
+    expect(run({ text: ['保存（非表示）'] }, html, { visibleText }).found).toBe(false);
+    expect(idOf(run({ text: ['保存'] }, html, { visibleText }).target)).toBe('b');
+  });
+
+  it('R-LOC-2: require を満たす外側が残り、内側が必須の照合で落ちても conflict は付かない', () => {
+    const r = run(
+      { text: ['保存'], require: { role: 'button' } },
+      '<button id="b"><span role="presentation">保存</span></button>',
+    );
+    expect(idOf(r.target)).toBe('b');
+    expect(r.reasons).toEqual([]);
+  });
+
+  it('R-LOC-2: 内側が表示されていなくても、表示されている外側が残る', () => {
+    const r = run(
+      { text: ['保存'], textTag: ['div'] },
+      '<div id="o"><div id="i" data-self-hidden>保存</div></div>',
+      { isVisible: (el) => !el.hasAttribute('data-self-hidden') },
+    );
+    expect(idOf(r.target)).toBe('o');
+  });
+
+  it('R-LOC-3: 表示領域より大きいフォームは、スクロール位置によらず採用する', () => {
+    document.body.innerHTML = '<form id="f"><i data-testid="t"></i></form>';
+    const form = byId('f');
+    for (const top of [0, -500, -2000]) {
+      setRect(form, { left: 0, top, right: 1000, bottom: top + 3000 });
+      const r = locate({ testId: 't', highlight: { closest: 'form' } }, document, makeEnv());
+      // 高さが表示領域を超える場合は採用する（上端が 0 のときも）
+      expect(r.highlightEl).toBe(form);
+    }
+  });
+
+  it('R-LOC-3: 表示領域と同じ大きさ（許容1px）の要素は不適格のまま', () => {
+    document.body.innerHTML = '<div id="c"><i data-testid="t"></i></div>';
+    setRect(byId('c'), { left: -1, top: 0, right: 1000, bottom: 801 });
+    const r = locate({ testId: 't', highlight: { closest: '#c' } }, document, makeEnv());
+    expect(r.found).toBe(false);
+  });
+
+  it('R-LOC-3: viewport が 0x0 のときは、覆う判定をしない', () => {
+    document.body.innerHTML = '<div id="c"><i data-testid="t"></i></div>';
+    setRect(byId('c'), { left: 0, top: 0, right: 1000, bottom: 800 });
+    const r = locate(
+      { testId: 't', highlight: { closest: '#c' } },
+      document,
+      makeEnv({ viewport: () => ({ width: 0, height: 0 }) }),
+    );
+    expect(idOf(r.highlightEl)).toBe('c');
+  });
+
+  it('R-LOC-4: require.inputType はブラウザが正規化した type で比べる（大文字・未知の値）', () => {
+    expect(run({ testId: 't', require: { inputType: 'password' } }, '<input data-testid="t" type="PASSWORD">').found).toBe(true);
+    expect(run({ testId: 't', require: { inputType: 'text' } }, '<input data-testid="t" type="foo">').found).toBe(true);
+    expect(run({ testId: 't', require: { inputType: 'text' } }, '<input data-testid="t">').found).toBe(true);
+    expect(run({ testId: 't', require: { inputType: 'foo' } }, '<input data-testid="t" type="foo">').found).toBe(false);
+    expect(run({ testId: 't', require: { inputType: 'text' } }, '<button data-testid="t"></button>').found).toBe(false);
+  });
+
+  it('R-LOC-5: article・aside・main・nav・section の中の header・footer は banner・contentinfo にならない', () => {
+    for (const wrap of ['article', 'aside', 'main', 'nav', 'section']) {
+      const html = `<${wrap}><header><button data-testid="t">x</button></header></${wrap}>`;
+      expect(run({ testId: 't', require: { region: 'banner' } }, html).found).toBe(false);
+      const footer = `<${wrap}><footer><button data-testid="t">x</button></footer></${wrap}>`;
+      expect(run({ testId: 't', require: { region: 'contentinfo' } }, footer).found).toBe(false);
+    }
+  });
+
+  it('R-LOC-5: 直下の header・footer は banner・contentinfo になる', () => {
+    expect(run({ testId: 't', require: { region: 'banner' } }, '<header><button data-testid="t">x</button></header>').found).toBe(true);
+    expect(run({ testId: 't', require: { region: 'contentinfo' } }, '<footer><button data-testid="t">x</button></footer>').found).toBe(true);
+  });
+
+  it('R-LOC-5: section・form は名前があるときだけ region・form になる', () => {
+    const button = '<button data-testid="t">x</button>';
+    expect(run({ testId: 't', require: { region: 'region' } }, `<section>${button}</section>`).found).toBe(false);
+    expect(run({ testId: 't', require: { region: 'region' } }, `<section aria-label="a">${button}</section>`).found).toBe(true);
+    expect(run({ testId: 't', require: { region: 'region' } }, `<h2 id="h">見出し</h2><section aria-labelledby="h">${button}</section>`).found).toBe(true);
+    expect(run({ testId: 't', require: { region: 'form' } }, `<form>${button}</form>`).found).toBe(false);
+    expect(run({ testId: 't', require: { region: 'form' } }, `<form aria-label="a">${button}</form>`).found).toBe(true);
+  });
+
+  it('R-LOC-6: highlight.closest は操作対象自身を含めず、親から探す', () => {
+    const r = run(
+      { testId: 't', highlight: { closest: '.card' } },
+      '<div class="card" id="p"><div class="card" id="self" data-testid="t"></div></div>',
+    );
+    expect(idOf(r.target)).toBe('self');
+    expect(idOf(r.highlightEl)).toBe('p');
+    const none = run({ testId: 't', highlight: { closest: '.card' } }, '<div class="card" data-testid="t"></div>');
+    expect(none.found).toBe(false);
+  });
+
+  it('R-LOC-7: 段階4で1000件の候補があっても 100ms 未満で終わる', () => {
+    let html = '';
+    for (let i = 0; i < 500; i += 1) html += '<div class="o"><div class="i">保存</div></div>';
+    document.body.innerHTML = `<div>${html}</div>`;
+    const env = makeEnv({ visibleText: (el) => el.textContent });
+    const start = performance.now();
+    const r = locate({ text: ['保存'], textTag: ['div'], match: 'contains' }, document, env);
+    expect(performance.now() - start).toBeLessThan(100);
+    expect(r.counts[0]?.collected).toBe(500);
+  });
+
+  it('R-LOC-8: 空白だけの名前の候補は、名前のない要素に一致しない', () => {
+    const r = run({ role: 'button', name: ['  '] }, '<button id="a"></button>');
     expect(r.found).toBe(false);
   });
 });

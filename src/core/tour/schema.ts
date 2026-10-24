@@ -131,6 +131,21 @@ const WithinSchema = z.union(
   { error: 'within は「role と name」「label」「css」のいずれか1つの形で書いてください' },
 );
 
+/** 手がかり（name・label・text・css）の範囲の上書き。範囲か、ページ全体を明示する `page`。 */
+const ClueWithinSchema = z.union([z.literal('page'), WithinSchema], {
+  error: 'within は範囲（「role と name」「label」「css」のいずれか1つの形）か page で書いてください',
+});
+
+/**
+ * 手がかり1つ。候補の配列か、`{ values, within? }`。
+ * `within` を書いた手がかりは、`target.within` の代わりにその範囲で探す。`page` はページ全体。
+ */
+const clueSchema = z.union([
+  candidateList,
+  z.strictObject({ values: candidateList, within: ClueWithinSchema.optional() }),
+]);
+export type Clue = z.output<typeof clueSchema>;
+
 const RequireSchema = z.strictObject({
   role: nonEmpty.optional(),
   inputType: nonEmpty.optional(),
@@ -143,12 +158,12 @@ export const TargetSchema = z
     tourId: nonEmpty.optional(),
     testId: nonEmpty.optional(),
     role: nonEmpty.optional(),
-    name: candidateList.optional(),
-    label: candidateList.optional(),
-    text: candidateList.optional(),
+    name: clueSchema.optional(),
+    label: clueSchema.optional(),
+    text: clueSchema.optional(),
     textTag: candidateList.optional(),
     match: z.enum(['exact', 'contains']).optional(),
-    css: candidateList.optional(),
+    css: clueSchema.optional(),
     within: WithinSchema.optional(),
     require: RequireSchema.optional(),
     highlight: z.strictObject({ closest: nonEmpty }).optional(),

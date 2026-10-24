@@ -1,9 +1,9 @@
 /**
  * IndexedDB の定義のテスト（ストア・索引・鍵・補助関数）。
  */
-import { IDBFactory } from 'fake-indexeddb';
-import { describe, expect, it } from 'vitest';
-import { DB_NAME, DB_VERSION, INDEX, STORE, openDb, requestToPromise, withTx } from './index.ts';
+import { IDBDatabase, IDBFactory, IDBVersionChangeEvent } from 'fake-indexeddb';
+import { describe, expect, it, vi } from 'vitest';
+import { DB_NAME, DB_VERSION, INDEX, STORE, forEachCursor, openDb, requestToPromise, withTx } from './index.ts';
 
 describe('openDb', () => {
   it('名前・版・5つのストアと索引ができる', async () => {
@@ -57,5 +57,48 @@ describe('withTx', () => {
       requestToPromise(tx.objectStore(STORE.meta).getAll()),
     );
     expect(rows).toEqual([]);
+  });
+});
+
+describe('第1段のレビュー指摘の修正（DB）', () => {
+  it('R-LOG-7: onblocked で失敗した後に onsuccess が来たら、その接続を閉じる', async () => {
+    const close = vi.spyOn(IDBDatabase.prototype, 'close');
+    try {
+      class BlockedFactory extends IDBFactory {
+        override open(name: string, version?: number): IDBOpenDBRequest {
+          const request = super.open(name, version);
+          // 実際の open が成功する前に、blocked を通知する（ハンドラが付いた後に届くよう、次の微小タスクで）
+          queueMicrotask(() => {
+            request.onblocked?.call(request, new IDBVersionChangeEvent('blocked'));
+          });
+          return request;
+        }
+      }
+      await expect(openDb(new BlockedFactory())).rejects.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      close.mockRestore();
+    }
+  });
+});
+
+describe('forEachCursor', () => {
+  it('R-LOG-2: visit が例外を投げたら止まって reject し、イベントの中で未処理にならない', async () => {
+    const db = await openDb(new IDBFactory());
+    await withTx(db, STORE.meta, 'readwrite', async (tx) => {
+      await requestToPromise(tx.objectStore(STORE.meta).put({ key: 'a', value: 1 }));
+    });
+    const boom = new Error('visit が投げた');
+    let visited = 0;
+    await expect(
+      withTx(db, STORE.meta, 'readonly', (tx) =>
+        forEachCursor(tx.objectStore(STORE.meta).openCursor(), () => {
+          visited += 1;
+          throw boom;
+        }),
+      ),
+    ).rejects.toBe(boom);
+    expect(visited).toBe(1);
   });
 });

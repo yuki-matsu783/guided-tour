@@ -15,5 +15,5 @@ export {
   TourSchema,
   UrlCondSchema,
 } from './schema.ts';
-export type { Done, Media, Step, Target, Tour, UrlCond } from './schema.ts';
+export type { Clue, Done, Media, Step, Target, Tour, UrlCond } from './schema.ts';
 export { matchUrl } from './url.ts';

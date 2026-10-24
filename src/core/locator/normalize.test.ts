@@ -35,3 +35,17 @@ describe('名前の正規化', () => {
     expect(containsAnyName('Delete account', ['delete'])).toBe(true);
   });
 });
+
+describe('空になる候補', () => {
+  it('R-LOC-8: 正規化すると空文字になる候補は、完全一致の照合に使わない', () => {
+    expect(matchesAnyName('', [''])).toBe(false);
+    expect(matchesAnyName('', ['  \n'])).toBe(false);
+    expect(matchesAnyName('削除', ['', '削除'])).toBe(true);
+  });
+
+  it('R-LOC-8: 正規化すると空文字になる候補は、部分一致の照合に使わない', () => {
+    expect(containsAnyName('削除', [''])).toBe(false);
+    expect(containsAnyName('削除', [' ', '　'])).toBe(false);
+    expect(containsAnyName('アカウント削除', ['', '削除'])).toBe(true);
+  });
+});

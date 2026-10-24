@@ -42,7 +42,7 @@ keywords: [sidepanel, logger, diagnostics, markdown]
   | 種類 | 許可するもの |
   |---|---|
   | 要素 | p、h1〜h4（1段下げて表示する）、strong、em、code、pre、ul、ol、li、blockquote、hr、br、table、thead、tbody、tr、th、td、a、img |
-  | 属性 | a の href、img の src と alt、th と td の揃え（クラスで表す） |
+  | 属性 | a の href、img の src と alt、ol の start（開始番号）、th と td の揃え（クラスで表す） |
   | URL の方式 | リンクは http / https だけ。画像は、画像の URL 管理で解決した拡張機能内の URL・blob URL・許可された data URL だけ |
 
   許可リストにないものは文字列として表示する。リンクは `target="_blank" rel="noopener noreferrer"` で出し、文字の後ろにホスト名を添え、`origins` 外なら「宣言外のサイト」と示す。画像を表示できない場合は代替文を表示する。

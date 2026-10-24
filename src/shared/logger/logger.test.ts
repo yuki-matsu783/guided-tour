@@ -132,7 +132,7 @@ describe('出来事のスキーマと検査', () => {
 
   it('T-LOG-11: 入力値・ページの文字列・URL を値に持つ項目は、記録にもコンソールにも含まれない', () => {
     const s = setup();
-    s.raw.log('info', 'tabs.status', { role: 'https://example.com/a?token=abc', status: 'ok' });
+    s.raw.log('info', 'tabs.status', { role: 'main', status: 'https://example.com/a?token=abc' });
     s.raw.log('info', 'import.result', { result: 'imported', files: 1, bytes: 1, name: 'パスワード123' });
     const text = everything(s);
     expect(text).not.toContain('example.com');
@@ -231,12 +231,25 @@ describe('レベルによる出力', () => {
     expect(s.entries.map((e) => e.level)).toEqual(['error', 'warn', 'info', 'debug']);
   });
 
-  it('T-LOG-25: レベルで出力されない出来事は、記録されず logger.invalid も出ない', () => {
+  it('T-LOG-25: レベルで出力されない正しい出来事は、記録されず logger.invalid も出ない', () => {
     const s = setup('error');
     s.logger.info('tabs.status', { role: 'main', status: 'ok' });
     s.logger.debug('session.goto', { from: 0, to: 1, accepted: false });
     expect(s.entries).toHaveLength(0);
     expect(s.calls).toHaveLength(0);
+  });
+
+  it('T-LOG-25: 出力されないレベルの出来事でも、スキーマに合わなければ logger.invalid が記録される（検査が先）', () => {
+    const s = setup('warn');
+    s.raw.log('debug', 'session.goto', { from: 'one', to: 2, accepted: true });
+    s.raw.log('info', 'tabs.status', { role: 'main', status: 'bad-status-value' });
+    s.raw.log('debug', 'not.an.event', {});
+    expect(s.entries.map((e) => [e.level, e.event, e.fields])).toEqual([
+      ['warn', 'logger.invalid', { event: 'session.goto' }],
+      ['warn', 'logger.invalid', { event: 'tabs.status' }],
+      ['warn', 'logger.invalid', { event: 'unknown' }],
+    ]);
+    expect(everything(s)).not.toContain('bad-status-value');
   });
 });
 
@@ -329,7 +342,7 @@ describe('コンソール出力', () => {
     s.logger.debug('tabs.status', { role: 'main', status: 'ok' });
     s.logger.info('session.goto', { from: 1, to: 2, accepted: true });
     s.logger.error('error', errorFields(new Error('https://example.com/a'), 'message'));
-    s.raw.log('debug', 'tabs.status', { role: 'https://example.com', status: 'ok' });
+    s.raw.log('debug', 'tabs.status', { role: 'main', status: 'https://example.com' });
     expect(s.calls.length).toBeGreaterThanOrEqual(4);
     for (const call of s.calls) {
       for (const arg of call.args) {
@@ -401,5 +414,33 @@ describe('ページ側とサイドパネルからの送信', () => {
       rejecting.info('session.stop', {});
     }).not.toThrow();
     await Promise.resolve();
+  });
+});
+
+describe('第1段のレビュー指摘の修正（ロガー）', () => {
+  it('R-LOG-3: errorFields は、name の getter が投げても Unknown を返す', () => {
+    const e = new Error('x');
+    Object.defineProperty(e, 'name', {
+      get() {
+        throw new Error('getter が投げた');
+      },
+    });
+    expect(errorFields(e, 'storage')).toEqual({ name: 'Unknown', reason: 'storage' });
+  });
+
+  it('R-LOG-4: tabs.status の role は、ツアーの役割名（空でない文字列）を受け付ける', () => {
+    const s = setup();
+    for (const role of ['main', '管理画面', 'role with space', 'a'.repeat(64)]) {
+      s.raw.log('info', 'tabs.status', { role, status: 'ok' });
+    }
+    expect(s.entries.map((e) => e.event)).toEqual(Array.from({ length: 4 }, () => 'tabs.status'));
+  });
+
+  it('R-LOG-4: 空・65文字以上・制御文字を含む役割名は受け付けず、logger.invalid になる', () => {
+    const s = setup();
+    for (const role of ['', 'a'.repeat(65), 'a\nb', 'a\u0000b', 'a\u007fb', 5]) {
+      s.raw.log('info', 'tabs.status', { role, status: 'ok' });
+    }
+    expect(s.entries.map((e) => e.event)).toEqual(Array.from({ length: 6 }, () => 'logger.invalid'));
   });
 });

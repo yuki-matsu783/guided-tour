@@ -112,7 +112,7 @@ describe('受信と再検査', () => {
         { ts: 'x' },
         { ...entry(NOW, 3), event: 'page text', fields: {} },
       ],
-    });
+    }, 'content');
     await env.store.flush();
     const rows = await allRows(env.db);
     expect(rows.map((r) => [r.event, r.fields])).toEqual([
@@ -125,10 +125,10 @@ describe('受信と再検査', () => {
   });
 
   it('T-LOG-34: 形が合わない LOG メッセージ（entries が配列でない）は捨てられる', async () => {
-    env.store.ingest({ type: 'LOG', entries: 'not an array' });
-    env.store.ingest({ type: 'LOG' });
-    env.store.ingest({ type: 'OTHER', entries: [entry(NOW)] });
-    env.store.ingest(null);
+    env.store.ingest({ type: 'LOG', entries: 'not an array' }, 'content');
+    env.store.ingest({ type: 'LOG' }, 'content');
+    env.store.ingest({ type: 'OTHER', entries: [entry(NOW)] }, 'content');
+    env.store.ingest(null, 'content');
     await env.store.flush();
     expect(await allRows(env.db)).toHaveLength(0);
   });
@@ -380,7 +380,7 @@ describe('JSON Lines の書き出しと消去', () => {
         { ...entry(NOW, 2), fields: { from: 1, to: 2, accepted: true, url: 'https://example.com/p' } },
         { ...entry(NOW, 3), event: 'error', fields: { name: 'Error', reason: 'x', message: 'ページの文字列' } },
       ],
-    });
+    }, 'content');
     const text = await env.store.exportJsonl();
     expect(text).not.toContain('example.com');
     expect(text).not.toContain('ページの文字列');
@@ -410,5 +410,144 @@ describe('JSON Lines の書き出しと消去', () => {
       return LogRecordSchema.parse(parsed).ts;
     });
     expect(times).toEqual([NOW + 10, NOW + 20, NOW + 30]);
+  });
+});
+
+/** スキーマを通さず、保存された生の行を入れる（壊れた行の再現用）。 */
+async function seedRaw(db: IDBDatabase, rows: Record<string, unknown>[]): Promise<void> {
+  await withTx(db, STORE.logs, 'readwrite', async (tx) => {
+    const store = tx.objectStore(STORE.logs);
+    await Promise.all(rows.map((r) => requestToPromise(store.add(r))));
+  });
+}
+
+const rawRows = (db: IDBDatabase) =>
+  withTx(db, STORE.logs, 'readonly', (tx) => requestToPromise(tx.objectStore(STORE.logs).getAll()));
+
+describe('第1段のレビュー指摘の修正（ログの保管）', () => {
+  it('R-LOG-1: 受け取った LOG の ts は受け取った時刻、ctx は送り手の実行場所に置き換わる', async () => {
+    env.store.ingest(
+      {
+        type: 'LOG',
+        entries: [
+          { ...entry(NOW + 99_999, 1), ctx: 'sidepanel' },
+          { ...entry(NOW - 99_999, 2), event: 'tabs.status', fields: { role: 'main', status: 'bad' } },
+        ],
+      },
+      'content',
+    );
+    await env.store.flush();
+    const rows = await allRows(env.db);
+    expect(rows.map((r) => [r.ts, r.ctx, r.event])).toEqual([
+      [NOW, 'content', 'session.goto'],
+      [NOW, 'content', 'logger.invalid'],
+    ]);
+  });
+
+  it('R-LOG-2: 削除は、スキーマに合わない行を飛ばさず消して止まらない', async () => {
+    await seedRaw(env.db, [
+      { ts: NOW - DAY, level: 'bad', ctx: 'content', event: 1, fields: 'x' },
+      { ts: NOW - 40 * DAY, junk: true },
+      { ts: NOW - DAY + 1, junk: true },
+    ]);
+    await seed(env.db, [entry(NOW - DAY + 2, 7)]);
+    await expect(env.store.start()).resolves.toBeUndefined();
+    expect(env.failures).toEqual([]);
+    expect((await rawRows(env.db)).length).toBe(1);
+    expect((await allRows(env.db)).map((r) => r.fields.from)).toEqual([7]);
+  });
+
+  it('R-LOG-2: 書き出しは、スキーマに合わない行があっても全体を失敗させず、その行を飛ばす', async () => {
+    await seedRaw(env.db, [{ ts: NOW - DAY, junk: true }]);
+    await seed(env.db, [entry(NOW - DAY + 1, 1), entry(NOW - DAY + 2, 2)]);
+    const lines = (await env.store.exportJsonl()).trim().split('\n');
+    expect(lines).toHaveLength(2);
+  });
+
+  it('R-LOG-3: onFailure が例外を投げても、書き込みの列は止まらず次の書き込みが行われる', async () => {
+    const store = createLogStore({
+      getDb: () => Promise.resolve(env.failing.value ? env.closed : env.db),
+      now: () => NOW,
+      timers: env.clock.timers,
+      onFailure: () => {
+        throw new Error('onFailure が投げた');
+      },
+    });
+    env.failing.value = true;
+    store.append(entry(NOW, 1));
+    await expect(store.flush()).resolves.toBeUndefined();
+    await expect(store.start()).resolves.toBeUndefined();
+    env.failing.value = false;
+    store.append(entry(NOW, 2));
+    await expect(store.flush()).resolves.toBeUndefined();
+    expect((await allRows(env.db)).map((r) => r.fields.from)).toEqual([2]);
+  });
+
+  it('R-LOG-5: 書き出しは、新しい順に 2,000 件だけを古い順に返す', async () => {
+    await seed(env.db, recent(2500));
+    const lines = (await env.store.exportJsonl()).trim().split('\n');
+    expect(lines).toHaveLength(2000);
+    const froms = lines.map((l) => {
+      const parsed: unknown = JSON.parse(l);
+      return LogRecordSchema.parse(parsed).fields.from;
+    });
+    expect(froms[0]).toBe(500);
+    expect(froms.at(-1)).toBe(2499);
+  });
+
+  it('R-LOG-6: 100件ごとの数え方で、超えた分は次の周期へ繰り越す', async () => {
+    const group = async (n: number, base: number): Promise<void> => {
+      for (const e of recent(n, NOW - DAY + base)) env.store.append(e);
+      await env.store.flush();
+    };
+    await seed(env.db, [entry(NOW - 40 * DAY, 100)]);
+    await group(40, 0);
+    await group(40, 100);
+    expect(await allRows(env.db)).toHaveLength(81);
+    await group(40, 200); // 120件目で削除が走り、20件を繰り越す
+    expect(await allRows(env.db)).toHaveLength(120);
+    await seed(env.db, [entry(NOW - 40 * DAY, 101)]);
+    await group(40, 300);
+    await group(39, 400); // 繰り越し 20 + 79 = 99
+    expect((await allRows(env.db)).some((r) => r.ts < NOW - MAX_AGE_MS)).toBe(true);
+    await group(1, 500); // 100件に届いて削除が走る
+    expect((await allRows(env.db)).some((r) => r.ts < NOW - MAX_AGE_MS)).toBe(false);
+  });
+
+  it('R-DIAG-3: 再試行の前に、上限内でも最も古い1割（最低1件）を消す', async () => {
+    await seed(env.db, recent(20));
+    let first = true;
+    const store = createLogStore({
+      getDb: () => {
+        const bad = first;
+        first = false;
+        return Promise.resolve(bad ? env.closed : env.db);
+      },
+      now: () => NOW,
+      timers: env.clock.timers,
+    });
+    store.append(entry(NOW, 99));
+    await store.flush();
+    const froms = (await allRows(env.db)).map((r) => r.fields.from);
+    expect(froms).toHaveLength(19);
+    expect(froms.slice(0, 2)).toEqual([2, 3]);
+    expect(froms.at(-1)).toBe(99);
+  });
+
+  it('R-DIAG-3: 件数が10件未満でも、再試行の前に最低1件の最も古いものを消す', async () => {
+    await seed(env.db, recent(3));
+    let first = true;
+    const store = createLogStore({
+      getDb: () => {
+        const bad = first;
+        first = false;
+        return Promise.resolve(bad ? env.closed : env.db);
+      },
+      now: () => NOW,
+      timers: env.clock.timers,
+    });
+    store.append(entry(NOW, 99));
+    await store.flush();
+    expect((await allRows(env.db)).map((r) => r.fields.from)).toEqual([1, 2, 99]);
   });
 });

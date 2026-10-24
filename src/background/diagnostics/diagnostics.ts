@@ -4,8 +4,8 @@
  *
  * - 数え方: 同じ `(sessionId, gen, reason)` は1回だけ数える（重複では何も更新しない）。`reasons` が空なら記録しない
  * - 上限: 1,000件。超えたら `lastAt` の古いものから消す（同じ `lastAt` は鍵の順）
- * - 失敗: 古いものを消して1回だけ再試行し、だめなら捨てる。例外は呼び出し元へ伝えず、
- *   `onFailure` に例外名と理由コードだけを渡す
+ * - 失敗: 古いもの（上限内でも最も古い1割、最低1件）を消して1回だけ再試行し、だめなら捨てる。
+ *   例外は呼び出し元へ伝えず、`onFailure` に例外名と理由コードだけを渡す（`onFailure` の例外は握りつぶす）
  */
 import {
   DiagnosticRecordSchema,
@@ -110,9 +110,29 @@ export function createDiagnostics(options: DiagnosticsOptions): Diagnostics {
     });
   }
 
-  async function trimOnly(): Promise<void> {
+  /** 容量不足のときの空き作り。上限を超えた分に加え、最も古い1割（最低1件）を `lastAt` の順に消す。 */
+  async function makeRoom(): Promise<void> {
     const db = await options.getDb();
-    await withTx(db, STORE.diagnostics, 'readwrite', trim);
+    await withTx(db, STORE.diagnostics, 'readwrite', async (tx) => {
+      await trim(tx);
+      const store = tx.objectStore(STORE.diagnostics);
+      const total = await requestToPromise(store.count());
+      let remaining = Math.max(1, Math.floor(total / 10));
+      if (total === 0) return;
+      await forEachCursor(store.index(INDEX.diagnosticsByLastAt).openCursor(), (cursor) => {
+        cursor.delete();
+        remaining -= 1;
+        return remaining > 0;
+      });
+    });
+  }
+
+  function notifyFailure(error: unknown): void {
+    try {
+      options.onFailure?.(errorFields(error, 'storage'));
+    } catch {
+      // 通知先の失敗で呼び出し元を止めない
+    }
   }
 
   async function list(tourId?: string): Promise<DiagnosticEntry[]> {
@@ -137,10 +157,10 @@ export function createDiagnostics(options: DiagnosticsOptions): Diagnostics {
         await count(tourId, stepId, sessionId, gen, reasons, summary);
       } catch {
         try {
-          await trimOnly();
+          await makeRoom();
           await count(tourId, stepId, sessionId, gen, reasons, summary);
         } catch (error) {
-          options.onFailure?.(errorFields(error, 'storage'));
+          notifyFailure(error);
         }
       }
     },
